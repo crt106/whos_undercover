@@ -56,6 +56,30 @@ app.get('/api/voice/:filename', (req, res) => {
   res.sendFile(filePath);
 });
 
+// 房间列表 API
+app.get('/api/rooms', (req, res) => {
+  const { rooms } = require('./game');
+  const roomList = [];
+
+  for (const [roomId, room] of rooms.entries()) {
+    if (room.phase === 'waiting' && room.players.length > 0) {
+      const host = room.players.find(p => p.id === room.hostId);
+      roomList.push({
+        id: roomId,
+        hostName: host ? host.name : '未知',
+        playerCount: room.players.length,
+        maxPlayers: 12,
+        phase: room.phase
+      });
+    }
+  }
+
+  // 按房间创建时间排序（房间号越小越早创建）
+  roomList.sort((a, b) => a.id.localeCompare(b.id));
+
+  res.json(roomList);
+});
+
 // 生产模式下服务静态文件
 if (isProd) {
   app.use(express.static(path.join(__dirname, '../client/dist')));
