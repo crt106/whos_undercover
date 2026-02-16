@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const GATE_PASSWORD = 'crt106';
+const GATE_PASSWORD = import.meta.env.VITE_GATE_PASSWORD;
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_SECONDS = 60;
 const STORAGE_KEY = 'wuc_gate_attempts';
@@ -22,6 +22,26 @@ export default function GatePassword({ onPass }) {
   const [error, setError] = useState('');
   const [locked, setLocked] = useState(false);
   const [countdown, setCountdown] = useState(0);
+
+  // 检查环境变量是否配置
+  if (!GATE_PASSWORD) {
+    return (
+      <div className="card animate-fade-in space-y-6">
+        <div className="text-center space-y-2">
+          <div className="text-5xl">⚠️</div>
+          <h1 className="text-2xl font-black bg-gradient-to-r from-red-600 to-orange-600 bg-clip-text text-transparent">
+            配置错误
+          </h1>
+          <p className="text-red-500 text-sm">
+            环境变量 VITE_GATE_PASSWORD 未配置
+          </p>
+          <p className="text-gray-600 text-xs">
+            请在 .env 文件中设置 VITE_GATE_PASSWORD 变量
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // 检查是否处于锁定状态
   useEffect(() => {
