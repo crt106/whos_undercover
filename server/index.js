@@ -15,6 +15,52 @@ const server = http.createServer(app);
 const isProd = process.env.NODE_ENV === 'production';
 const PORT = process.env.PORT || 3001;
 
+// 密码校验中间件
+const GAME_PASSWORD = process.env.GAME_PASSWORD || 'default123';
+
+// 存储已验证的会话
+const verifiedSessions = new Set();
+
+// 密码校验中间件
+const requireAuth = (req, res, next) => {
+  // 静态文件和首页不需要验证
+  if (req.path === '/' || req.path.startsWith('/assets/') || req.path.endsWith('.html') || req.path.endsWith('.css') || req.path.endsWith('.js')) {
+    return next();
+  }
+
+  // 密码验证接口本身不需要验证
+  if (req.path === '/api/verify-password') {
+    return next();
+  }
+
+  const sessionId = req.headers['x-session-id'];
+  if (!sessionId || !verifiedSessions.has(sessionId)) {
+    return res.status(401).json({ error: '需要密码验证' });
+  }
+
+  next();
+};
+
+// 应用密码校验中间件到所有 API 路由
+app.use('/api', requireAuth);
+
+// 密码验证接口
+app.use(express.json());
+app.post('/api/verify-password', (req, res) => {
+  const { password, sessionId } = req.body;
+
+  if (!password || !sessionId) {
+    return res.status(400).json({ error: '缺少密码或会话ID' });
+  }
+
+  if (password === GAME_PASSWORD) {
+    verifiedSessions.add(sessionId);
+    res.json({ success: true });
+  } else {
+    res.status(401).json({ error: '密码错误' });
+  }
+});
+
 // Socket.IO
 const io = new Server(server, {
   cors: {
@@ -98,6 +144,15 @@ const gameDisconnectTimers = new Map();
 const GAME_DISCONNECT_TIMEOUT = 60;
 
 const gameIo = io.of('/game');
+
+// WebSocket 连接验证中间件
+gameIo.use((socket, next) => {
+  const sessionId = socket.handshake.auth.sessionId;
+  if (!sessionId || !verifiedSessions.has(sessionId)) {
+    return next(new Error('需要密码验证'));
+  }
+  next();
+});
 
 gameIo.on('connection', (socket) => {
   console.log('Connected:', socket.id);

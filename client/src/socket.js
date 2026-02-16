@@ -7,6 +7,11 @@ const socket = io('/game', {
   reconnection: true,
   reconnectionAttempts: 10,
   reconnectionDelay: 1000,
+  auth: {
+    get sessionId() {
+      return localStorage.getItem('gameSessionId');
+    }
+  }
 });
 
 export default socket;
