@@ -9,55 +9,14 @@ export default function Home({ playerName: initialName, connected, onCreateRoom,
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // 密码验证状态
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [password, setPassword] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
-
-  // 生成会话ID
-  const [sessionId] = useState(() => Math.random().toString(36).substring(2) + Date.now().toString(36));
+  // 从 localStorage 获取已验证的 sessionId
+  const [sessionId] = useState(() => localStorage.getItem('gameSessionId') || '');
 
   const roomsPerPage = 5;
 
-  // 密码验证函数
-  const handlePasswordSubmit = async (e) => {
-    e.preventDefault();
-    if (!password.trim()) return;
-
-    setAuthLoading(true);
-    setAuthError('');
-
-    try {
-      const response = await fetch('/api/verify-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          password: password.trim(),
-          sessionId
-        })
-      });
-
-      if (response.ok) {
-        setIsAuthenticated(true);
-        // 将 sessionId 存储到 localStorage 以便其他请求使用
-        localStorage.setItem('gameSessionId', sessionId);
-      } else {
-        const error = await response.json();
-        setAuthError(error.error || '验证失败');
-      }
-    } catch (error) {
-      setAuthError('网络错误，请重试');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
   // 获取房间列表
   const fetchRooms = async () => {
-    if (!connected || !isAuthenticated) return;
+    if (!connected) return;
     setLoading(true);
     try {
       const response = await fetch('/api/rooms', {
@@ -78,13 +37,13 @@ export default function Home({ playerName: initialName, connected, onCreateRoom,
 
   // 进入房间列表模式时获取数据
   useEffect(() => {
-    if (mode === 'rooms' && isAuthenticated) {
+    if (mode === 'rooms') {
       fetchRooms();
       // 每5秒刷新一次房间列表
       const interval = setInterval(fetchRooms, 5000);
       return () => clearInterval(interval);
     }
-  }, [mode, connected, isAuthenticated]);
+  }, [mode, connected]);
 
   // 过滤和分页逻辑
   const filteredRooms = rooms.filter(room =>
@@ -127,182 +86,145 @@ export default function Home({ playerName: initialName, connected, onCreateRoom,
         <p className="text-violet-400 text-sm">在线多人语音推理游戏</p>
       </div>
 
-      {/* 密码验证界面 */}
-      {!isAuthenticated ? (
-        <div className="space-y-4">
-          <div className="text-center">
-            <h2 className="text-lg font-semibold text-gray-700 mb-2">请输入游戏密码</h2>
-            <p className="text-sm text-gray-500">需要验证身份才能进入游戏</p>
-          </div>
+      {/* 连接状态 */}
+      {!connected && (
+        <div className="text-center text-sm text-orange-500 bg-orange-50 rounded-xl py-2 px-4">
+          正在连接服务器...
+        </div>
+      )}
 
-          <form onSubmit={handlePasswordSubmit} className="space-y-4">
-            <input
-              type="password"
-              className="input-field"
-              placeholder="输入游戏密码"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={authLoading}
-            />
+      {/* 昵称输入 */}
+      <div>
+        <input
+          type="text"
+          className="input-field"
+          placeholder="输入你的昵称"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={8}
+        />
+      </div>
 
-            {authError && (
-              <div className="text-center text-sm text-red-500 bg-red-50 rounded-xl py-2 px-4">
-                {authError}
+      {/* 按钮 */}
+      {mode === null ? (
+        <div className="space-y-3">
+          <button className="btn-primary" onClick={handleCreate} disabled={!name.trim() || !connected}>
+            创建房间
+          </button>
+          <button className="btn-secondary" onClick={() => setMode('rooms')} disabled={!name.trim()}>
+            浏览房间
+          </button>
+          <button className="btn-secondary" onClick={() => setMode('join')} disabled={!name.trim()}>
+            输入房间号
+          </button>
+        </div>
+      ) : mode === 'join' ? (
+        <div className="space-y-3 animate-fade-in">
+          <input
+            type="text"
+            className="input-field tracking-[0.5em]"
+            placeholder="输入房间号"
+            value={roomCode}
+            onChange={(e) => setRoomCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            maxLength={6}
+            inputMode="numeric"
+          />
+          <button className="btn-primary" onClick={handleJoin} disabled={!name.trim() || roomCode.length !== 6 || !connected}>
+            加入
+          </button>
+          <button className="btn-secondary" onClick={() => setMode(null)}>
+            返回
+          </button>
+        </div>
+      ) : mode === 'rooms' ? (
+        <div className="space-y-4 animate-fade-in">
+          {/* 搜索框 */}
+          <input
+            type="text"
+            className="input-field"
+            placeholder="搜索房主名称或房间号..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+
+          {/* 房间列表 */}
+          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            {loading ? (
+              <div className="p-6 text-center text-gray-500">
+                <div className="animate-spin w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full mx-auto mb-2"></div>
+                加载中...
+              </div>
+            ) : currentRooms.length === 0 ? (
+              <div className="p-6 text-center text-gray-500">
+                {filteredRooms.length === 0 && rooms.length === 0 ? '暂无可用房间' : '没有找到匹配的房间'}
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {currentRooms.map((room) => (
+                  <div key={room.id} className="p-4 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-medium text-gray-900">#{room.id}</span>
+                          <span className="text-sm text-gray-500">房主: {room.hostName}</span>
+                        </div>
+                        <div className="text-sm text-gray-400 mt-1">
+                          {room.playerCount}/{room.maxPlayers} 人
+                        </div>
+                      </div>
+                      <button
+                        className="px-4 py-2 bg-violet-500 text-white rounded-xl hover:bg-violet-600 transition-colors text-sm"
+                        onClick={() => handleJoinRoom(room.id)}
+                        disabled={!connected}
+                      >
+                        加入
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
+          </div>
 
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={!password.trim() || authLoading}
-            >
-              {authLoading ? '验证中...' : '验证'}
-            </button>
-          </form>
-        </div>
-      ) : (
-        <>
-          {/* 连接状态 */}
-          {!connected && (
-            <div className="text-center text-sm text-orange-500 bg-orange-50 rounded-xl py-2 px-4">
-              正在连接服务器...
+          {/* 分页 */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center space-x-2">
+              <button
+                className="px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                disabled={currentPage === 1}
+              >
+                上一页
+              </button>
+              <span className="text-sm text-gray-500">
+                {currentPage} / {totalPages}
+              </span>
+              <button
+                className="px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                disabled={currentPage === totalPages}
+              >
+                下一页
+              </button>
             </div>
           )}
 
-          {/* 昵称输入 */}
-          <div>
-            <input
-              type="text"
-              className="input-field"
-              placeholder="输入你的昵称"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={8}
-            />
-          </div>
+          <button className="btn-secondary w-full" onClick={() => setMode(null)}>
+            返回
+          </button>
+        </div>
+      ) : null}
 
-          {/* 按钮 */}
-          {mode === null ? (
-            <div className="space-y-3">
-              <button className="btn-primary" onClick={handleCreate} disabled={!name.trim() || !connected}>
-                创建房间
-              </button>
-              <button className="btn-secondary" onClick={() => setMode('rooms')} disabled={!name.trim()}>
-                浏览房间
-              </button>
-              <button className="btn-secondary" onClick={() => setMode('join')} disabled={!name.trim()}>
-                输入房间号
-              </button>
-            </div>
-          ) : mode === 'join' ? (
-            <div className="space-y-3 animate-fade-in">
-              <input
-                type="text"
-                className="input-field tracking-[0.5em]"
-                placeholder="输入房间号"
-                value={roomCode}
-                onChange={(e) => setRoomCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                maxLength={6}
-                inputMode="numeric"
-              />
-              <button className="btn-primary" onClick={handleJoin} disabled={!name.trim() || roomCode.length !== 6 || !connected}>
-                加入
-              </button>
-              <button className="btn-secondary" onClick={() => setMode(null)}>
-                返回
-              </button>
-            </div>
-          ) : mode === 'rooms' ? (
-            <div className="space-y-4 animate-fade-in">
-              {/* 搜索框 */}
-              <input
-                type="text"
-                className="input-field"
-                placeholder="搜索房主名称或房间号..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-
-              {/* 房间列表 */}
-              <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-                {loading ? (
-                  <div className="p-6 text-center text-gray-500">
-                    <div className="animate-spin w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full mx-auto mb-2"></div>
-                    加载中...
-                  </div>
-                ) : currentRooms.length === 0 ? (
-                  <div className="p-6 text-center text-gray-500">
-                    {filteredRooms.length === 0 && rooms.length === 0 ? '暂无可用房间' : '没有找到匹配的房间'}
-                  </div>
-                ) : (
-                  <div className="divide-y divide-gray-100">
-                    {currentRooms.map((room) => (
-                      <div key={room.id} className="p-4 hover:bg-gray-50 transition-colors">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-2">
-                              <span className="font-medium text-gray-900">#{room.id}</span>
-                              <span className="text-sm text-gray-500">房主: {room.hostName}</span>
-                            </div>
-                            <div className="text-sm text-gray-400 mt-1">
-                              {room.playerCount}/{room.maxPlayers} 人
-                            </div>
-                          </div>
-                          <button
-                            className="px-4 py-2 bg-violet-500 text-white rounded-xl hover:bg-violet-600 transition-colors text-sm"
-                            onClick={() => handleJoinRoom(room.id)}
-                            disabled={!connected}
-                          >
-                            加入
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* 分页 */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-center space-x-2">
-                  <button
-                    className="px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage === 1}
-                  >
-                    上一页
-                  </button>
-                  <span className="text-sm text-gray-500">
-                    {currentPage} / {totalPages}
-                  </span>
-                  <button
-                    className="px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                    disabled={currentPage === totalPages}
-                  >
-                    下一页
-                  </button>
-                </div>
-              )}
-
-              <button className="btn-secondary w-full" onClick={() => setMode(null)}>
-                返回
-              </button>
-            </div>
-          ) : null}
-
-          {/* 规则 */}
-          <div className="bg-violet-50 rounded-2xl p-4 space-y-2">
-            <h3 className="font-bold text-violet-700 text-sm">游戏规则</h3>
-            <ul className="text-xs text-violet-500 space-y-1">
-              <li>• 每人获得一个词语，卧底的词与其他人不同但相近</li>
-              <li>• 轮流用语言描述自己的词，不能直接说出词语</li>
-              <li>• 每轮投票选出最可疑的人，被投出者出局</li>
-              <li>• 平民投出所有卧底则胜利，反之卧底胜利</li>
-            </ul>
-          </div>
-        </>
-      )}
+      {/* 规则 */}
+      <div className="bg-violet-50 rounded-2xl p-4 space-y-2">
+        <h3 className="font-bold text-violet-700 text-sm">游戏规则</h3>
+        <ul className="text-xs text-violet-500 space-y-1">
+          <li>• 每人获得一个词语，卧底的词与其他人不同但相近</li>
+          <li>• 轮流用语言描述自己的词，不能直接说出词语</li>
+          <li>• 每轮投票选出最可疑的人，被投出者出局</li>
+          <li>• 平民投出所有卧底则胜利，反之卧底胜利</li>
+        </ul>
+      </div>
     </div>
   );
 }

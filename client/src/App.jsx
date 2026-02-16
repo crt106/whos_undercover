@@ -19,19 +19,8 @@ function generateSessionId() {
 }
 
 export default function App() {
-  // 检查 URL 是否携带密码参数
-  const urlPassword = (() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('pwd') || params.get('password') || null;
-  })();
-
-  const [authed, setAuthed] = useState(() => {
-    // 如果 URL 携带密码，先不认为已认证，等验证完成
-    if (urlPassword) return false;
-    // 如果已有有效的 sessionId，认为已认证
-    return !!localStorage.getItem('gameSessionId');
-  });
-  const [urlAuthPending, setUrlAuthPending] = useState(urlPassword);
+  const [authed, setAuthed] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   const [page, setPage] = useState('home');
   const [playerId] = useState(getPlayerId);
   const [playerName, setPlayerName] = useState(localStorage.getItem('wuc_player_name') || '');
@@ -42,47 +31,54 @@ export default function App() {
   const [voteResult, setVoteResult] = useState(null);
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
-  const [disconnectNotice, setDisconnectNotice] = useState(null); // { playerName, seconds }
+  const [disconnectNotice, setDisconnectNotice] = useState(null);
   const pageRef = useRef(page);
   pageRef.current = page;
 
-  // URL 密码验证
+  // 初始化认证检查
   useEffect(() => {
-    if (!urlAuthPending || authed) return;
-
-    const verifyUrlPassword = async () => {
-      let sessionId = localStorage.getItem('gameSessionId');
-      if (!sessionId) {
-        sessionId = generateSessionId();
-      }
-
-      try {
-        const response = await fetch('/api/verify-password', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: urlAuthPending, sessionId }),
-        });
-
-        if (response.ok) {
-          localStorage.setItem('gameSessionId', sessionId);
-          setAuthed(true);
-        }
-      } catch (err) {
-        console.error('URL password verification failed:', err);
-      }
-
-      // 清除 URL 中的密码参数
+    const checkAuth = async () => {
       const params = new URLSearchParams(window.location.search);
-      params.delete('pwd');
-      params.delete('password');
-      const clean = params.toString();
-      const newUrl = window.location.pathname + (clean ? '?' + clean : '') + window.location.hash;
-      window.history.replaceState({}, '', newUrl);
-      setUrlAuthPending(null);
+      const urlPassword = params.get('pwd') || params.get('password');
+
+      // 如果 URL 携带密码，直接验证
+      if (urlPassword) {
+        let sessionId = localStorage.getItem('gameSessionId');
+        if (!sessionId) {
+          sessionId = generateSessionId();
+        }
+
+        try {
+          const response = await fetch('/api/verify-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: urlPassword, sessionId }),
+          });
+
+          if (response.ok) {
+            localStorage.setItem('gameSessionId', sessionId);
+            setAuthed(true);
+          }
+        } catch (err) {
+          console.error('URL password verification failed:', err);
+        }
+
+        // 清除 URL 中的密码参数
+        params.delete('pwd');
+        params.delete('password');
+        const clean = params.toString();
+        const newUrl = window.location.pathname + (clean ? '?' + clean : '') + window.location.hash;
+        window.history.replaceState({}, '', newUrl);
+      } else if (localStorage.getItem('gameSessionId')) {
+        // 没有 URL 密码，但有本地 sessionId
+        setAuthed(true);
+      }
+
+      setAuthChecked(true);
     };
 
-    verifyUrlPassword();
-  }, [urlAuthPending, authed]);
+    checkAuth();
+  }, []);
 
   // 自动清除错误
   useEffect(() => {
@@ -274,6 +270,15 @@ export default function App() {
   const handleGatePass = useCallback(() => {
     setAuthed(true);
   }, []);
+
+  // 认证检查中，显示加载
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="text-violet-500">加载中...</div>
+      </div>
+    );
+  }
 
   if (!authed) {
     return (
