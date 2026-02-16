@@ -22,6 +22,9 @@ const GAME_PASSWORD = process.env.GAME_PASSWORD || 'default123';
 const verifiedSessions = new Set();
 
 // 密码校验中间件
+// 先设置 JSON 解析中间件
+app.use(express.json());
+
 const requireAuth = (req, res, next) => {
   // 静态文件和首页不需要验证
   if (req.path === '/' || req.path.startsWith('/assets/') || req.path.endsWith('.html') || req.path.endsWith('.css') || req.path.endsWith('.js')) {
@@ -30,6 +33,11 @@ const requireAuth = (req, res, next) => {
 
   // 密码验证接口本身不需要验证
   if (req.path === '/api/verify-password') {
+    return next();
+  }
+
+  // 支持通过 URL 参数传递密码（兼容旧方式）
+  if (req.query.password === GAME_PASSWORD) {
     return next();
   }
 
@@ -43,9 +51,6 @@ const requireAuth = (req, res, next) => {
 
 // 应用密码校验中间件到所有 API 路由
 app.use('/api', requireAuth);
-
-// 密码验证接口
-app.use(express.json());
 app.post('/api/verify-password', (req, res) => {
   const { password, sessionId } = req.body;
 
