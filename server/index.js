@@ -31,8 +31,8 @@ const requireAuth = (req, res, next) => {
     return next();
   }
 
-  // 密码验证接口本身不需要验证
-  if (req.path === '/api/verify-password') {
+  // 密码验证接口本身不需要验证（中间件挂载到 /api 时，req.path 是相对路径）
+  if (req.path === '/verify-password') {
     return next();
   }
 

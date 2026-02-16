@@ -14,22 +14,19 @@ function getPlayerId() {
   return id;
 }
 
+function generateSessionId() {
+  return 'sess_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
 export default function App() {
   const [authed, setAuthed] = useState(() => {
-    if (localStorage.getItem('wuc_authed') === '1') return true;
-    // 支持 URL 携带密码直接进入，如 ?pwd=crt106
+    // 如果已有有效的 sessionId，认为已认证
+    return !!localStorage.getItem('gameSessionId');
+  });
+  const [urlAuthPending, setUrlAuthPending] = useState(() => {
+    // 检查 URL 是否携带密码参数
     const params = new URLSearchParams(window.location.search);
-    const pwd = params.get('pwd');
-    if (pwd === 'crt106') {
-      localStorage.setItem('wuc_authed', '1');
-      // 清除 URL 中的密码参数
-      params.delete('pwd');
-      const clean = params.toString();
-      const newUrl = window.location.pathname + (clean ? '?' + clean : '') + window.location.hash;
-      window.history.replaceState({}, '', newUrl);
-      return true;
-    }
-    return false;
+    return params.get('pwd') || params.get('password') || null;
   });
   const [page, setPage] = useState('home');
   const [playerId] = useState(getPlayerId);
@@ -45,6 +42,44 @@ export default function App() {
   const pageRef = useRef(page);
   pageRef.current = page;
 
+  // URL 密码验证
+  useEffect(() => {
+    if (!urlAuthPending || authed) return;
+
+    const verifyUrlPassword = async () => {
+      let sessionId = localStorage.getItem('gameSessionId');
+      if (!sessionId) {
+        sessionId = generateSessionId();
+      }
+
+      try {
+        const response = await fetch('/api/verify-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: urlAuthPending, sessionId }),
+        });
+
+        if (response.ok) {
+          localStorage.setItem('gameSessionId', sessionId);
+          setAuthed(true);
+        }
+      } catch (err) {
+        console.error('URL password verification failed:', err);
+      }
+
+      // 清除 URL 中的密码参数
+      const params = new URLSearchParams(window.location.search);
+      params.delete('pwd');
+      params.delete('password');
+      const clean = params.toString();
+      const newUrl = window.location.pathname + (clean ? '?' + clean : '') + window.location.hash;
+      window.history.replaceState({}, '', newUrl);
+      setUrlAuthPending(null);
+    };
+
+    verifyUrlPassword();
+  }, [urlAuthPending, authed]);
+
   // 自动清除错误
   useEffect(() => {
     if (error) {
@@ -53,7 +88,10 @@ export default function App() {
     }
   }, [error]);
 
+  // Socket 连接 - 只在认证后连接
   useEffect(() => {
+    if (!authed) return;
+
     socket.connect();
 
     socket.on('connect', () => {
@@ -159,8 +197,9 @@ export default function App() {
       socket.off('words-changed');
       socket.off('player-disconnect-countdown');
       socket.off('game-aborted');
+      socket.disconnect();
     };
-  }, []);
+  }, [authed, playerId]);
 
   const createRoom = useCallback((name) => {
     if (!socket.connected) {
@@ -224,7 +263,6 @@ export default function App() {
   }, []);
 
   const handleGatePass = useCallback(() => {
-    localStorage.setItem('wuc_authed', '1');
     setAuthed(true);
   }, []);
 
