@@ -5,3 +5,7 @@ log/
 server/uploads/*.webm
 .DS_Store
 .env
+
+# pnpm
+pnpm-lock.yaml
+.pnpm-debug.log*

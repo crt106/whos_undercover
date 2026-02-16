@@ -20,6 +20,24 @@
 
 ## 快速开始
 
+### 使用 pnpm（推荐）
+
+```bash
+# 安装 pnpm（如果还没有）
+npm install -g pnpm
+
+# 安装所有依赖
+pnpm install
+
+# 开发模式（同时启动前后端）
+pnpm run dev
+
+# 生产构建 & 启动
+pnpm start
+```
+
+### 使用 npm
+
 ```bash
 # 安装依赖
 npm install
@@ -30,6 +48,18 @@ npm run dev
 
 # 生产构建 & 启动
 npm start
+```
+
+### 环境配置
+
+创建 `.env` 文件并设置访问密码：
+
+```bash
+# 复制示例配置
+cp .env.example .env
+
+# 编辑 .env 文件，设置你的密码
+VITE_GATE_PASSWORD=your_password_here
 ```
 
 开发模式下后端运行在 `http://localhost:3001`，前端运行在 `http://localhost:5173`。
