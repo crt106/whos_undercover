@@ -1,13 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export default function Home({ playerName: initialName, connected, onCreateRoom, onJoinRoom }) {
   const [name, setName] = useState(initialName || '');
   const [roomCode, setRoomCode] = useState('');
-  const [mode, setMode] = useState(null); // null, 'join', 'rooms'
+  const [mode, setMode] = useState(null); // null, 'join', 'rooms', 'mic-test'
   const [rooms, setRooms] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // 麦克风测试状态
+  const [micStatus, setMicStatus] = useState('idle'); // 'idle' | 'testing' | 'recording' | 'playing' | 'success' | 'error'
+  const [micError, setMicError] = useState('');
+  const streamRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunks = useRef([]);
+  const audioRef = useRef(null);
 
   // 从 localStorage 获取已验证的 sessionId
   const [sessionId] = useState(() => localStorage.getItem('gameSessionId') || '');
@@ -75,6 +83,122 @@ export default function Home({ playerName: initialName, connected, onCreateRoom,
     onJoinRoom(name.trim(), roomId);
   };
 
+  // 麦克风测试相关函数
+  const cleanupMicTest = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    mediaRecorderRef.current = null;
+    audioChunks.current = [];
+  };
+
+  const startMicTest = async () => {
+    setMicError('');
+    setMicStatus('testing');
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setMicError('您的浏览器不支持录音功能');
+      setMicStatus('error');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: { ideal: true },
+          noiseSuppression: { ideal: true },
+          autoGainControl: { ideal: true },
+        }
+      });
+      streamRef.current = stream;
+      setMicStatus('recording');
+
+      // 选择 mimeType
+      let mimeType = '';
+      if (typeof MediaRecorder.isTypeSupported === 'function') {
+        for (const type of ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/wav']) {
+          if (MediaRecorder.isTypeSupported(type)) {
+            mimeType = type;
+            break;
+          }
+        }
+      }
+
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      audioChunks.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunks.current.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(audioChunks.current, { type: recorder.mimeType || 'audio/webm' });
+        if (blob.size < 500) {
+          setMicError('录音太短，请重试');
+          setMicStatus('idle');
+          return;
+        }
+
+        // 播放录音
+        setMicStatus('playing');
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          setMicStatus('success');
+        };
+
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          setMicError('播放失败');
+          setMicStatus('error');
+        };
+
+        audio.play();
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+
+      // 3秒后自动停止
+      setTimeout(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop();
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(t => t.stop());
+          }
+        }
+      }, 3000);
+
+    } catch (err) {
+      console.error('Mic test error:', err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setMicError('麦克风权限被拒绝，请点击地址栏左侧的锁图标开启权限');
+      } else if (err.name === 'NotFoundError') {
+        setMicError('未检测到麦克风设备');
+      } else if (err.name === 'NotReadableError') {
+        setMicError('麦克风被其他应用占用');
+      } else {
+        setMicError('无法访问麦克风: ' + (err.message || err.name));
+      }
+      setMicStatus('error');
+    }
+  };
+
+  const exitMicTest = () => {
+    cleanupMicTest();
+    setMicStatus('idle');
+    setMicError('');
+    setMode(null);
+  };
+
   return (
     <div className="card animate-fade-in space-y-6">
       {/* Logo */}
@@ -116,6 +240,56 @@ export default function Home({ playerName: initialName, connected, onCreateRoom,
           </button>
           <button className="btn-secondary" onClick={() => setMode('join')} disabled={!name.trim()}>
             输入房间号
+          </button>
+          <button
+            className="w-full py-3 rounded-2xl font-bold text-base bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all"
+            onClick={() => setMode('mic-test')}
+          >
+            🎤 测试麦克风
+          </button>
+        </div>
+      ) : mode === 'mic-test' ? (
+        <div className="space-y-4 animate-fade-in">
+          <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center space-y-4">
+            <div className="text-4xl">
+              {micStatus === 'idle' && '🎤'}
+              {micStatus === 'testing' && '⏳'}
+              {micStatus === 'recording' && '🔴'}
+              {micStatus === 'playing' && '🔊'}
+              {micStatus === 'success' && '✅'}
+              {micStatus === 'error' && '❌'}
+            </div>
+            <div className="text-gray-700 font-medium">
+              {micStatus === 'idle' && '点击下方按钮开始测试'}
+              {micStatus === 'testing' && '正在请求麦克风权限...'}
+              {micStatus === 'recording' && '正在录音... (3秒)'}
+              {micStatus === 'playing' && '正在播放录音...'}
+              {micStatus === 'success' && '麦克风工作正常！'}
+              {micStatus === 'error' && '测试失败'}
+            </div>
+            {micError && (
+              <div className="text-sm text-red-500 bg-red-50 rounded-xl p-3">
+                {micError}
+              </div>
+            )}
+            {micStatus === 'recording' && (
+              <div className="flex justify-center">
+                <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
+              </div>
+            )}
+          </div>
+
+          {(micStatus === 'idle' || micStatus === 'success' || micStatus === 'error') && (
+            <button
+              className="btn-primary"
+              onClick={startMicTest}
+            >
+              {micStatus === 'idle' ? '开始测试' : '重新测试'}
+            </button>
+          )}
+
+          <button className="btn-secondary" onClick={exitMicTest}>
+            返回
           </button>
         </div>
       ) : mode === 'join' ? (

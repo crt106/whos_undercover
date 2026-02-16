@@ -5,6 +5,7 @@ export default function VoiceRecorder({ onRecorded }) {
   const [uploading, setUploading] = useState(false);
   const [micReady, setMicReady] = useState(false);
   const [micError, setMicError] = useState('');
+  const [permissionState, setPermissionState] = useState('prompt'); // 'prompt' | 'granted' | 'denied'
 
   const streamRef = useRef(null);
   const mediaRecorder = useRef(null);
@@ -13,6 +14,42 @@ export default function VoiceRecorder({ onRecorded }) {
   const isRecording = useRef(false);
   const onRecordedRef = useRef(onRecorded);
   onRecordedRef.current = onRecorded;
+
+  // 检查麦克风权限状态
+  useEffect(() => {
+    const checkPermission = async () => {
+      // 检查是否支持 mediaDevices
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setMicError('您的浏览器不支持录音功能');
+        setPermissionState('denied');
+        return;
+      }
+
+      // 使用 Permissions API 检查权限状态（如果支持）
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const result = await navigator.permissions.query({ name: 'microphone' });
+          setPermissionState(result.state);
+
+          // 监听权限变化
+          result.onchange = () => {
+            setPermissionState(result.state);
+            if (result.state === 'denied') {
+              setMicError('麦克风权限被拒绝，请在浏览器设置中开启');
+              setMicReady(false);
+            } else if (result.state === 'granted') {
+              setMicError('');
+            }
+          };
+        } catch (e) {
+          // 某些浏览器不支持 microphone 权限查询，忽略错误
+          console.log('Permission query not supported:', e);
+        }
+      }
+    };
+
+    checkPermission();
+  }, []);
 
   // 组件卸载时释放 stream
   useEffect(() => {
@@ -30,15 +67,58 @@ export default function VoiceRecorder({ onRecorded }) {
       setMicReady(true);
       return true;
     }
+
+    // 清除之前的错误
+    setMicError('');
+
+    // 检查基本支持
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setMicError('您的浏览器不支持录音功能，请使用 Chrome 或 Safari');
+      return false;
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 使用更宽松的约束，提高兼容性
+      const constraints = {
+        audio: {
+          echoCancellation: { ideal: true },
+          noiseSuppression: { ideal: true },
+          autoGainControl: { ideal: true },
+        }
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
       setMicReady(true);
       setMicError('');
+      setPermissionState('granted');
       return true;
     } catch (err) {
-      console.error('Mic access denied:', err);
-      setMicError('麦克风权限被拒绝');
+      console.error('Mic access error:', err);
+
+      // 根据错误类型给出更具体的提示
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setPermissionState('denied');
+        setMicError('麦克风权限被拒绝，请点击地址栏左侧的锁图标开启权限');
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setMicError('未检测到麦克风设备');
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        setMicError('麦克风被其他应用占用，请关闭后重试');
+      } else if (err.name === 'OverconstrainedError') {
+        // 约束过严，尝试使用最简单的约束重试
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          streamRef.current = stream;
+          setMicReady(true);
+          setMicError('');
+          setPermissionState('granted');
+          return true;
+        } catch (retryErr) {
+          setMicError('无法访问麦克风');
+        }
+      } else {
+        setMicError('无法访问麦克风: ' + (err.message || err.name));
+      }
       return false;
     }
   }, []);
@@ -147,6 +227,29 @@ export default function VoiceRecorder({ onRecorded }) {
 
   // 麦克风未就绪：显示"点击开启麦克风"按钮
   if (!micReady) {
+    // 权限被永久拒绝时，显示引导信息
+    if (permissionState === 'denied') {
+      return (
+        <div className="flex flex-col items-center gap-2">
+          <div className="w-full py-3 px-4 rounded-2xl bg-gray-100 text-gray-500 text-center">
+            <div className="text-sm font-medium mb-1">麦克风权限已被禁用</div>
+            <div className="text-xs text-gray-400">
+              请点击地址栏左侧的 🔒 图标 → 网站设置 → 开启麦克风权限，然后刷新页面
+            </div>
+          </div>
+          {micError && (
+            <span className="text-xs text-red-500">{micError}</span>
+          )}
+          <button
+            className="text-xs text-violet-500 underline"
+            onClick={() => window.location.reload()}
+          >
+            刷新页面重试
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center gap-1">
         <button
@@ -156,8 +259,11 @@ export default function VoiceRecorder({ onRecorded }) {
           🎤 点击开启麦克风
         </button>
         {micError && (
-          <span className="text-xs text-red-500">{micError}</span>
+          <span className="text-xs text-red-500 text-center px-2">{micError}</span>
         )}
+        <span className="text-xs text-gray-400">
+          点击后请在弹窗中选择「允许」
+        </span>
       </div>
     );
   }
