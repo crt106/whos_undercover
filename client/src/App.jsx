@@ -19,15 +19,19 @@ function generateSessionId() {
 }
 
 export default function App() {
+  // 检查 URL 是否携带密码参数
+  const urlPassword = (() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('pwd') || params.get('password') || null;
+  })();
+
   const [authed, setAuthed] = useState(() => {
+    // 如果 URL 携带密码，先不认为已认证，等验证完成
+    if (urlPassword) return false;
     // 如果已有有效的 sessionId，认为已认证
     return !!localStorage.getItem('gameSessionId');
   });
-  const [urlAuthPending, setUrlAuthPending] = useState(() => {
-    // 检查 URL 是否携带密码参数
-    const params = new URLSearchParams(window.location.search);
-    return params.get('pwd') || params.get('password') || null;
-  });
+  const [urlAuthPending, setUrlAuthPending] = useState(urlPassword);
   const [page, setPage] = useState('home');
   const [playerId] = useState(getPlayerId);
   const [playerName, setPlayerName] = useState(localStorage.getItem('wuc_player_name') || '');
@@ -141,6 +145,11 @@ export default function App() {
     socket.on('connect_error', (err) => {
       console.error('Socket connect error:', err.message);
       setConnected(false);
+      // 如果是认证错误，清除本地 session 并要求重新登录
+      if (err.message === '需要密码验证') {
+        localStorage.removeItem('gameSessionId');
+        setAuthed(false);
+      }
     });
 
     socket.on('room-update', (state) => {
