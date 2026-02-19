@@ -6,7 +6,9 @@ export default function Room({ roomState, playerId, onLeave }) {
   const [copied, setCopied] = useState(false);
   const isHost = playerId === roomState.hostId;
   const me = roomState.players.find(p => p.id === playerId);
-  const allReady = roomState.players.length >= 4 && roomState.players.every(p => p.ready);
+  // 房主不参与准备状态，只需其他玩家全部准备
+  const nonHostPlayers = roomState.players.filter(p => p.id !== roomState.hostId);
+  const allReady = roomState.players.length >= 4 && nonHostPlayers.every(p => p.ready);
 
   const copyRoomId = () => {
     navigator.clipboard.writeText(roomState.id).then(() => {
@@ -60,7 +62,7 @@ export default function Room({ roomState, playerId, onLeave }) {
               player={player}
               isHost={player.id === roomState.hostId}
               isMe={player.id === playerId}
-              showReady
+              showReady={player.id !== roomState.hostId}
             />
           ))}
           {/* 空位 */}
@@ -113,7 +115,7 @@ export default function Room({ roomState, playerId, onLeave }) {
             onClick={startGame}
             disabled={!allReady}
           >
-            {allReady ? '开始游戏' : `等待准备 (${roomState.players.filter(p => p.ready).length}/${roomState.players.length})`}
+            {allReady ? '开始游戏' : `等待准备 (${nonHostPlayers.filter(p => p.ready).length}/${nonHostPlayers.length})`}
           </button>
         )}
         <button className="btn-secondary text-base" onClick={onLeave}>

@@ -1,5 +1,6 @@
 export default function GameResult({ voteResult, roomState, isHost, onNextRound, onPlayAgain, onClose }) {
   const isGameOver = roomState.phase === 'game_over';
+  const isUndercoverGuess = roomState.phase === 'undercover_guess';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -46,7 +47,7 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
         )}
 
         {/* 游戏结束 */}
-        {isGameOver && voteResult.gameOver && (
+        {isGameOver && voteResult.gameOver && !voteResult.gameOver.guessRequired && (
           <div className="text-center space-y-2 pt-2 border-t border-violet-100">
             <div className="text-5xl">
               {voteResult.gameOver.winner === 'civilian' ? '🎉' : '🕵️'}
@@ -61,6 +62,14 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
           </div>
         )}
 
+        {/* 卧底进入猜词阶段提示 */}
+        {(isUndercoverGuess || voteResult.gameOver?.guessRequired) && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center space-y-1">
+            <p className="text-sm font-bold text-red-700">🕵️ 卧底的最后机会！</p>
+            <p className="text-xs text-red-500">卧底被淘汰，但还有 30 秒猜出平民词语翻盘！</p>
+          </div>
+        )}
+
         {/* 操作按钮 */}
         <div className="space-y-2">
           {isGameOver && isHost && (
@@ -68,13 +77,13 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
               再来一局
             </button>
           )}
-          {!isGameOver && isHost && (
+          {!isGameOver && !isUndercoverGuess && isHost && (
             <button className="btn-primary" onClick={onNextRound}>
               下一轮
             </button>
           )}
           <button className="btn-secondary !py-2.5 !text-base" onClick={onClose}>
-            关闭
+            {isUndercoverGuess ? '关闭并观战' : '关闭'}
           </button>
         </div>
       </div>

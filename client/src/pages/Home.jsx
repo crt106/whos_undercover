@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 
-export default function Home({ playerName: initialName, connected, onCreateRoom, onJoinRoom }) {
+const AVATAR_OPTIONS = ['🐱', '🐶', '🐰', '🦊', '🐻', '🐼', '🐨', '🦁', '🐸', '🐵', '🐔', '🐧', '🦄', '🐯', '🐮', '🐷', '🐙', '🦋', '🐢'];
+
+export default function Home({ playerName: initialName, playerAvatar: initialAvatar, connected, onCreateRoom, onJoinRoom }) {
   const [name, setName] = useState(initialName || '');
+  const [avatar, setAvatar] = useState(initialAvatar || AVATAR_OPTIONS[0]);
   const [roomCode, setRoomCode] = useState('');
   const [mode, setMode] = useState(null); // null, 'join', 'rooms', 'mic-test'
   const [rooms, setRooms] = useState([]);
@@ -70,17 +73,17 @@ export default function Home({ playerName: initialName, connected, onCreateRoom,
 
   const handleCreate = () => {
     if (!name.trim()) return;
-    onCreateRoom(name.trim());
+    onCreateRoom(name.trim(), avatar);
   };
 
   const handleJoin = () => {
     if (!name.trim() || !roomCode.trim()) return;
-    onJoinRoom(name.trim(), roomCode.trim());
+    onJoinRoom(name.trim(), roomCode.trim(), avatar);
   };
 
   const handleJoinRoom = (roomId) => {
     if (!name.trim()) return;
-    onJoinRoom(name.trim(), roomId);
+    onJoinRoom(name.trim(), roomId, avatar);
   };
 
   // 麦克风测试相关函数
@@ -217,8 +220,36 @@ export default function Home({ playerName: initialName, connected, onCreateRoom,
         </div>
       )}
 
-      {/* 昵称输入 */}
-      <div>
+      {/* 昵称 & 头像 */}
+      <div className="space-y-3">
+        {/* 头像选择 */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="w-12 h-12 rounded-full bg-violet-100 flex items-center justify-center text-2xl shrink-0 ring-2 ring-violet-400">
+              {avatar}
+            </div>
+            <div
+              className="avatar-scroll flex gap-2 flex-1 overflow-x-auto py-1"
+              style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}
+            >
+              <style>{`.avatar-scroll::-webkit-scrollbar { display: none; }`}</style>
+              {AVATAR_OPTIONS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => setAvatar(emoji)}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center text-xl transition-all shrink-0 ${avatar === emoji
+                    ? 'bg-violet-200 ring-2 ring-violet-500 scale-110'
+                    : 'bg-gray-100 hover:bg-violet-50 hover:scale-105'
+                    }`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {/* 昵称输入 */}
         <input
           type="text"
           className="input-field"

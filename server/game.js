@@ -6,14 +6,25 @@ const PHASE = {
   SPEAKING: 'speaking',
   VOTING: 'voting',
   RESULT: 'result',
+  UNDERCOVER_GUESS: 'undercover_guess', // 卧底最后猜词阶段
   GAME_OVER: 'game_over',
 };
+
+// Fisher-Yates 洗牌算法
+function shuffleArray(arr) {
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
 
 class Room {
   constructor(id, hostId) {
     this.id = id;
     this.hostId = hostId;
-    this.players = []; // { id, name, ready, alive, role, word, vote, speech }
+    this.players = []; // { id, name, avatar, ready, alive, role, word, vote, speech }
     this.phase = PHASE.WAITING;
     this.undercoverCount = 1;
     this.round = 0;
@@ -26,9 +37,15 @@ class Room {
     this.winner = null;
     this.changeWordVotes = new Set(); // 投票换词的玩家ID集合
     this.wordChanged = false;         // 本局是否已换过词
+    this.lastUndercoverIds = new Set(); // 上一局卧底的玩家ID
+    this.speakingOrder = [];           // 当前局随机发言顺序（玩家ID数组）
+    this.speakingOrderIndex = 0;       // 当前发言者在 speakingOrder 中的位置
+    this.guessingUndercoverId = null;  // 正在猜词的卧底ID
+    this.guessResult = null;           // 猜词结果 { playerId, guess, correct, timeout }
+    this.speechHistory = [];           // 历史发言记录 [{ round, speeches: [{id, name, speech}] }]
   }
 
-  addPlayer(id, name) {
+  addPlayer(id, name, avatar) {
     if (this.phase !== PHASE.WAITING) return { error: '游戏已开始，无法加入' };
     if (this.players.length >= 12) return { error: '房间已满' };
     if (this.players.find(p => p.id === id)) return { error: '已在房间中' };
@@ -36,6 +53,7 @@ class Room {
     const player = {
       id,
       name,
+      avatar: avatar || null,
       ready: false,
       alive: true,
       online: true,
@@ -80,7 +98,8 @@ class Room {
   }
 
   allReady() {
-    return this.players.length >= 4 && this.players.every(p => p.ready);
+    // 房主不参与准备状态，只需非房主玩家全部准备即可
+    return this.players.length >= 4 && this.players.every(p => p.id === this.hostId || p.ready);
   }
 
   setUndercoverCount(count) {
@@ -100,14 +119,24 @@ class Room {
     this.civilianWord = civilianWord;
     this.undercoverWord = undercoverWord;
 
-    // 随机选择卧底
-    const indices = this.players.map((_, i) => i);
-    const shuffled = indices.sort(() => Math.random() - 0.5);
-    const undercoverIndices = new Set(shuffled.slice(0, this.undercoverCount));
+    // 随机选择卧底（使用 Fisher-Yates，尽量不选上一局的卧底）
+    let playerIds = this.players.map(p => p.id);
+    const shuffled = shuffleArray(playerIds);
 
-    this.players.forEach((p, i) => {
+    // 若玩家数足够，将上一局卧底移到候选末尾，减少重复概率
+    if (this.lastUndercoverIds.size > 0 && this.players.length > this.undercoverCount + this.lastUndercoverIds.size) {
+      const nonLast = shuffled.filter(id => !this.lastUndercoverIds.has(id));
+      const last = shuffled.filter(id => this.lastUndercoverIds.has(id));
+      shuffled.length = 0;
+      shuffled.push(...nonLast, ...last);
+    }
+
+    const undercoverIds = new Set(shuffled.slice(0, this.undercoverCount));
+    this.lastUndercoverIds = new Set(undercoverIds);
+
+    this.players.forEach(p => {
       p.alive = true;
-      p.role = undercoverIndices.has(i) ? 'undercover' : 'civilian';
+      p.role = undercoverIds.has(p.id) ? 'undercover' : 'civilian';
       p.word = p.role === 'undercover' ? undercoverWord : civilianWord;
       p.vote = null;
       p.speech = null;
@@ -119,6 +148,7 @@ class Room {
     this.voteResult = null;
     this.changeWordVotes = new Set();
     this.wordChanged = false;
+    this.speechHistory = [];
 
     return { success: true };
   }
@@ -158,6 +188,7 @@ class Room {
 
     this.changeWordVotes = new Set();
     this.wordChanged = true;
+    this.speechHistory = [];
     // 回到准备阶段让玩家看新词
     this.phase = PHASE.PLAYING;
     this.round = 0;
@@ -165,6 +196,16 @@ class Room {
   }
 
   startSpeaking() {
+    // 将上一轮发言存入历史（首轮前 round=0，无需存储）
+    if (this.round > 0) {
+      const speeches = this.players
+        .filter(p => p.speech !== null)
+        .map(p => ({ id: p.id, name: p.name, speech: p.speech }));
+      if (speeches.length > 0) {
+        this.speechHistory.push({ round: this.round, speeches });
+      }
+    }
+
     this.round++;
     this.phase = PHASE.SPEAKING;
     this.players.forEach(p => {
@@ -172,8 +213,13 @@ class Room {
       p.vote = null;
     });
 
-    // 找到第一个活着的玩家
-    this.currentSpeakerIndex = this.players.findIndex(p => p.alive);
+    // 随机打乱活着玩家的发言顺序
+    const aliveIds = this.players.filter(p => p.alive).map(p => p.id);
+    this.speakingOrder = shuffleArray(aliveIds);
+    this.speakingOrderIndex = 0;
+
+    // 找到第一个发言者在 players 数组中的位置
+    this.currentSpeakerIndex = this.players.findIndex(p => p.id === this.speakingOrder[0]);
     return this.currentSpeakerIndex;
   }
 
@@ -183,24 +229,20 @@ class Room {
 
     player.speech = speech;
 
-    // 找下一个活着的玩家
-    let nextIndex = -1;
-    for (let i = this.currentSpeakerIndex + 1; i < this.players.length; i++) {
-      if (this.players[i].alive && !this.players[i].speech) {
-        nextIndex = i;
-        break;
-      }
-    }
+    // 按随机发言顺序找下一个未发言的玩家
+    this.speakingOrderIndex++;
 
-    if (nextIndex === -1) {
+    if (this.speakingOrderIndex >= this.speakingOrder.length) {
       // 所有人都发言完毕，进入投票
       this.phase = PHASE.VOTING;
       this.currentSpeakerIndex = -1;
       return { allDone: true };
     }
 
+    const nextPlayerId = this.speakingOrder[this.speakingOrderIndex];
+    const nextIndex = this.players.findIndex(p => p.id === nextPlayerId);
     this.currentSpeakerIndex = nextIndex;
-    return { nextSpeaker: this.players[nextIndex].id, nextIndex };
+    return { nextSpeaker: nextPlayerId, nextIndex };
   }
 
   submitVote(playerId, targetId) {
@@ -263,8 +305,8 @@ class Room {
       tie: candidates.length > 1,
     };
 
-    // 检查胜负
-    const gameOver = this.checkWin();
+    // 检查胜负（传入本轮被淘汰的玩家，用于判断是否触发卧底猜词）
+    const gameOver = this.checkWin(eliminatedPlayer);
 
     return {
       voteResult: this.voteResult,
@@ -275,11 +317,18 @@ class Room {
     };
   }
 
-  checkWin() {
+  checkWin(eliminatedPlayer = null) {
     const aliveUndercover = this.players.filter(p => p.alive && p.role === 'undercover').length;
     const aliveCivilian = this.players.filter(p => p.alive && p.role === 'civilian').length;
 
     if (aliveUndercover === 0) {
+      // 所有卧底都被淘汰——如果本轮淘汰的是最后一个卧底，给其猜词机会
+      if (eliminatedPlayer && eliminatedPlayer.role === 'undercover') {
+        this.phase = PHASE.UNDERCOVER_GUESS;
+        this.guessingUndercoverId = eliminatedPlayer.id;
+        return { guessRequired: true, guessingUndercoverId: eliminatedPlayer.id };
+      }
+      // 兜底：直接平民胜
       this.winner = 'civilian';
       this.phase = PHASE.GAME_OVER;
       return { winner: 'civilian', civilianWord: this.civilianWord, undercoverWord: this.undercoverWord };
@@ -292,6 +341,45 @@ class Room {
     }
 
     return null;
+  }
+
+  // 卧底提交猜词答案
+  submitUndercoverGuess(playerId, guess) {
+    if (this.phase !== PHASE.UNDERCOVER_GUESS) return { error: '不在猜词阶段' };
+    if (playerId !== this.guessingUndercoverId) return { error: '只有被淘汰的卧底才能猜词' };
+
+    const normalizedGuess = (guess || '').trim().toLowerCase();
+    const normalizedAnswer = this.civilianWord.trim().toLowerCase();
+    const correct = normalizedGuess === normalizedAnswer;
+
+    this.guessResult = { playerId, guess: normalizedGuess, correct, timeout: false };
+    this.winner = correct ? 'undercover' : 'civilian';
+    this.phase = PHASE.GAME_OVER;
+
+    return {
+      correct,
+      guess: normalizedGuess,
+      winner: this.winner,
+      civilianWord: this.civilianWord,
+      undercoverWord: this.undercoverWord,
+    };
+  }
+
+  // 猜词超时，平民获胜
+  timeoutUndercoverGuess() {
+    if (this.phase !== PHASE.UNDERCOVER_GUESS) return null;
+
+    this.guessResult = { playerId: this.guessingUndercoverId, guess: null, correct: false, timeout: true };
+    this.winner = 'civilian';
+    this.phase = PHASE.GAME_OVER;
+
+    return {
+      correct: false,
+      timeout: true,
+      winner: 'civilian',
+      civilianWord: this.civilianWord,
+      undercoverWord: this.undercoverWord,
+    };
   }
 
   getPublicState() {
@@ -309,9 +397,18 @@ class Room {
       changeWordNeeded: Math.floor(this.players.length / 2) + 1,
       changeWordVoters: [...this.changeWordVotes],
       wordChanged: this.wordChanged,
+      // 卧底猜词相关
+      guessingUndercoverId: this.guessingUndercoverId,
+      guessResult: this.guessResult,
+      // 历史发言记录
+      speechHistory: this.speechHistory,
+      // 游戏结束时暴露词语
+      civilianWord: this.phase === PHASE.GAME_OVER ? this.civilianWord : null,
+      undercoverWord: this.phase === PHASE.GAME_OVER ? this.undercoverWord : null,
       players: this.players.map(p => ({
         id: p.id,
         name: p.name,
+        avatar: p.avatar,
         ready: p.ready,
         alive: p.alive,
         online: p.online,
@@ -345,6 +442,12 @@ class Room {
     this.winner = null;
     this.changeWordVotes = new Set();
     this.wordChanged = false;
+    this.speakingOrder = [];
+    this.speakingOrderIndex = 0;
+    this.lastUndercoverIds = new Set();
+    this.guessingUndercoverId = null;
+    this.guessResult = null;
+    this.speechHistory = [];
     this.players.forEach(p => {
       p.ready = p.id === this.hostId;
       p.alive = true;
@@ -365,6 +468,12 @@ class Room {
     this.winner = null;
     this.changeWordVotes = new Set();
     this.wordChanged = false;
+    this.speakingOrder = [];
+    this.speakingOrderIndex = 0;
+    this.guessingUndercoverId = null;
+    this.guessResult = null;
+    this.speechHistory = [];
+    // lastUndercoverIds 保留，供下一局避免重复选择
     this.players.forEach(p => {
       p.ready = p.id === this.hostId;
       p.alive = true;

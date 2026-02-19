@@ -24,6 +24,7 @@ export default function App() {
   const [page, setPage] = useState('home');
   const [playerId] = useState(getPlayerId);
   const [playerName, setPlayerName] = useState(localStorage.getItem('wuc_player_name') || '');
+  const [playerAvatar, setPlayerAvatar] = useState(localStorage.getItem('wuc_player_avatar') || '');
   const [roomId, setRoomId] = useState(null);
   const [roomState, setRoomState] = useState(null);
   const [myWord, setMyWord] = useState(null);
@@ -101,11 +102,13 @@ export default function App() {
       // 每次连接/重连都重新 join room，确保 Socket.IO room 成员关系恢复
       const savedRoom = localStorage.getItem('wuc_room_id');
       const savedName = localStorage.getItem('wuc_player_name');
+      const savedAvatar = localStorage.getItem('wuc_player_avatar');
       if (savedRoom && savedName) {
         socket.emit('join-room', {
           roomId: savedRoom,
           playerName: savedName,
           playerId,
+          playerAvatar: savedAvatar || '',
         }, (res) => {
           if (res && !res.error) {
             setRoomId(savedRoom);
@@ -206,14 +209,16 @@ export default function App() {
     };
   }, [authed, playerId]);
 
-  const createRoom = useCallback((name) => {
+  const createRoom = useCallback((name, avatar) => {
     if (!socket.connected) {
       setError('正在连接服务器，请稍后再试...');
       return;
     }
     setPlayerName(name);
+    setPlayerAvatar(avatar || '');
     localStorage.setItem('wuc_player_name', name);
-    socket.emit('create-room', { playerName: name, playerId }, (res) => {
+    localStorage.setItem('wuc_player_avatar', avatar || '');
+    socket.emit('create-room', { playerName: name, playerId, playerAvatar: avatar || '' }, (res) => {
       if (!res) {
         setError('服务器无响应，请检查网络');
         return;
@@ -228,14 +233,16 @@ export default function App() {
     });
   }, [playerId]);
 
-  const joinRoom = useCallback((name, rid) => {
+  const joinRoom = useCallback((name, rid, avatar) => {
     if (!socket.connected) {
       setError('正在连接服务器，请稍后再试...');
       return;
     }
     setPlayerName(name);
+    setPlayerAvatar(avatar || '');
     localStorage.setItem('wuc_player_name', name);
-    socket.emit('join-room', { roomId: rid, playerName: name, playerId }, (res) => {
+    localStorage.setItem('wuc_player_avatar', avatar || '');
+    socket.emit('join-room', { roomId: rid, playerName: name, playerId, playerAvatar: avatar || '' }, (res) => {
       if (!res) {
         setError('服务器无响应，请检查网络');
         return;
@@ -305,6 +312,7 @@ export default function App() {
         {page === 'home' && (
           <Home
             playerName={playerName}
+            playerAvatar={playerAvatar}
             connected={connected}
             onCreateRoom={createRoom}
             onJoinRoom={joinRoom}

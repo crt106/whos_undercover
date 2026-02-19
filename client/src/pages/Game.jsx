@@ -11,6 +11,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
   const [speechText, setSpeechText] = useState('');
   const [myVote, setMyVote] = useState(null);
   const [showResult, setShowResult] = useState(false);
+  const [guessText, setGuessText] = useState('');
 
   const isHost = playerId === roomState.hostId;
   const me = roomState.players.find(p => p.id === playerId);
@@ -60,6 +61,14 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
     socket.emit('next-round');
   };
 
+  const submitGuess = () => {
+    if (!guessText.trim()) return;
+    socket.emit('submit-undercover-guess', { guess: guessText.trim() }, (res) => {
+      if (res?.error) console.error(res.error);
+    });
+    setGuessText('');
+  };
+
   const playAgain = () => {
     setShowResult(false);
     setVoteResult(null);
@@ -79,8 +88,12 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
     speaking: `第 ${roomState.round} 轮 · 发言中`,
     voting: `第 ${roomState.round} 轮 · 投票中`,
     result: `第 ${roomState.round} 轮 · 投票结果`,
+    undercover_guess: '卧底最后机会 · 猜词中',
     game_over: '游戏结束',
   };
+
+  const isGuessingUndercover = playerId === roomState.guessingUndercoverId;
+  const guessingPlayer = roomState.players.find(p => p.id === roomState.guessingUndercoverId);
 
   // 检查是否有离线玩家（活着的）
   const offlinePlayers = roomState.players.filter(p => p.alive && p.online === false);
@@ -112,6 +125,8 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
           ? 'bg-blue-50 border border-blue-200'
           : roomState.phase === 'voting'
           ? 'bg-rose-50 border border-rose-200'
+          : roomState.phase === 'undercover_guess'
+          ? 'bg-red-50 border border-red-300'
           : 'card !p-4'
       }`}>
         <div className="flex items-center justify-between">
@@ -122,9 +137,11 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
               ? 'text-blue-700'
               : roomState.phase === 'voting'
               ? 'text-rose-700'
+              : roomState.phase === 'undercover_guess'
+              ? 'text-red-700'
               : 'text-violet-700'
           }`}>
-            {roomState.phase === 'playing' ? '⏳ ' : roomState.phase === 'speaking' ? '💬 ' : roomState.phase === 'voting' ? '🗳️ ' : ''}
+            {roomState.phase === 'playing' ? '⏳ ' : roomState.phase === 'speaking' ? '💬 ' : roomState.phase === 'voting' ? '🗳️ ' : roomState.phase === 'undercover_guess' ? '🕵️ ' : ''}
             {phaseLabel[roomState.phase] || ''}
           </span>
           {roomState.phase === 'playing' && (
@@ -135,6 +152,9 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
           )}
           {roomState.phase === 'voting' && !myVote && (
             <Timer key={`vote-${roomState.round}`} seconds={30} />
+          )}
+          {roomState.phase === 'undercover_guess' && (
+            <Timer key={`guess-${roomState.guessingUndercoverId}`} seconds={30} />
           )}
         </div>
       </div>
@@ -205,30 +225,17 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
         </div>
       </div>
 
-      {/* 发言记录 */}
-      {(roomState.phase === 'speaking' || roomState.phase === 'voting') && (
-        <div className="card !p-4 space-y-2">
-          <p className="text-xs font-bold text-violet-400">本轮发言</p>
-          {roomState.players.filter(p => p.alive && p.speech).map(player => (
-            <div key={player.id} className="flex items-start gap-2 text-sm">
-              <span className="font-bold text-violet-600 shrink-0">
-                {player.name}{player.id === playerId ? '(我)' : ''}:
-              </span>
-              {player.speech.type === 'text' ? (
-                <span className="text-gray-700">{player.speech.content}</span>
-              ) : (
-                <audio
-                  src={player.speech.content}
-                  controls
-                  className="h-8 max-w-[180px]"
-                />
-              )}
-            </div>
-          ))}
-          {roomState.players.filter(p => p.alive && p.speech).length === 0 && (
-            <p className="text-xs text-violet-300">暂无发言</p>
-          )}
-        </div>
+      {/* 多轮发言历史 Tab */}
+      {roomState.round > 0 && (
+        <SpeechHistoryTabs
+          speechHistory={roomState.speechHistory || []}
+          currentRound={roomState.round}
+          currentSpeeches={roomState.players
+            .filter(p => p.speech)
+            .map(p => ({ id: p.id, name: p.name, speech: p.speech }))}
+          playerId={playerId}
+          phase={roomState.phase}
+        />
       )}
 
       {/* 发言输入（自己的回合） */}
@@ -276,6 +283,41 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
         />
       )}
 
+      {/* 卧底最后猜词 */}
+      {roomState.phase === 'undercover_guess' && isGuessingUndercover && (
+        <div className="card !p-4 space-y-3 animate-bounce-in border-2 border-red-300">
+          <p className="text-sm font-bold text-red-700 text-center">🕵️ 你的最后一次机会！</p>
+          <p className="text-xs text-red-500 text-center">猜出平民的词语，卧底即可翻盘获胜！</p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              className="input-field !text-left !text-base flex-1"
+              placeholder="输入你猜的平民词语..."
+              value={guessText}
+              onChange={(e) => setGuessText(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submitGuess()}
+              maxLength={50}
+              autoFocus
+            />
+            <button
+              className="px-4 rounded-2xl bg-gradient-to-r from-red-500 to-rose-600 text-white font-bold active:scale-95 transition-all disabled:opacity-50"
+              onClick={submitGuess}
+              disabled={!guessText.trim()}
+            >
+              猜词
+            </button>
+          </div>
+        </div>
+      )}
+      {roomState.phase === 'undercover_guess' && !isGuessingUndercover && guessingPlayer && (
+        <div className="card !p-4 text-center space-y-1">
+          <p className="text-violet-600 text-sm">
+            🕵️ <span className="font-bold">{guessingPlayer.name}</span> 正在尝试猜出平民词语...
+          </p>
+          <p className="text-xs text-violet-400">猜对则卧底翻盘获胜！</p>
+        </div>
+      )}
+
       {/* 投票结果 / 游戏结果 */}
       {showResult && voteResult && (
         <GameResult
@@ -297,6 +339,26 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
           <p className="text-xl font-black text-violet-700">
             {roomState.winner === 'civilian' ? '平民胜利！' : '卧底胜利！'}
           </p>
+          {/* 猜词结果说明 */}
+          {roomState.guessResult && (
+            <div className="bg-violet-50 rounded-xl p-3 text-sm space-y-1">
+              {roomState.guessResult.timeout ? (
+                <p className="text-violet-500">卧底未在限时内猜出词语，平民获胜</p>
+              ) : roomState.guessResult.correct ? (
+                <p className="text-green-600 font-bold">卧底猜对了「{roomState.civilianWord}」，翻盘成功！</p>
+              ) : (
+                <p className="text-red-500">
+                  卧底猜了「{roomState.guessResult.guess}」，答案是「{roomState.civilianWord}」，猜错了
+                </p>
+              )}
+            </div>
+          )}
+          {roomState.civilianWord && (
+            <div className="text-sm text-violet-500 space-y-1">
+              <p>平民词：<span className="font-bold">{roomState.civilianWord}</span></p>
+              <p>卧底词：<span className="font-bold text-red-500">{roomState.undercoverWord}</span></p>
+            </div>
+          )}
           {isHost && (
             <button className="btn-primary" onClick={playAgain}>
               再来一局
@@ -304,6 +366,123 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// 多轮发言历史 Tab 组件
+function SpeechHistoryTabs({ speechHistory, currentRound, currentSpeeches, playerId, phase }) {
+  const showCurrentTab = ['speaking', 'voting', 'result', 'undercover_guess', 'game_over'].includes(phase);
+
+  // 合并历史轮次 + 当前轮次
+  const allRounds = [
+    ...speechHistory,
+    ...(showCurrentTab ? [{ round: currentRound, speeches: currentSpeeches, isCurrent: true }] : []),
+  ];
+
+  const [activeTab, setActiveTab] = useState(() => currentRound);
+  const tabsContainerRef = useRef(null);
+  const tabRefs = useRef({});
+  const prevSpeechCountRef = useRef(currentSpeeches.length);
+  const prevRoundRef = useRef(currentRound);
+
+  // 轮次切换时跳回当前轮
+  useEffect(() => {
+    if (currentRound !== prevRoundRef.current) {
+      setActiveTab(currentRound);
+      prevRoundRef.current = currentRound;
+    }
+  }, [currentRound]);
+
+  // 当前轮新增发言时，若用户在查看历史轮，自动跳回当前轮
+  useEffect(() => {
+    const count = currentSpeeches.length;
+    if (count > prevSpeechCountRef.current && activeTab !== currentRound && currentRound > 0) {
+      setActiveTab(currentRound);
+    }
+    prevSpeechCountRef.current = count;
+  }, [currentSpeeches.length, currentRound, activeTab]);
+
+  // activeTab 变化时，滚动 Tab 到可见区域中央
+  useEffect(() => {
+    const tabEl = tabRefs.current[activeTab];
+    if (tabEl) {
+      tabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [activeTab]);
+
+  if (allRounds.length === 0) return null;
+
+  const activeRoundData = allRounds.find(r => r.round === activeTab);
+  const isViewingHistory = activeTab !== currentRound && showCurrentTab;
+
+  return (
+    <div className="card !p-0 overflow-hidden">
+      {/* Tab 栏 - 横向滑动 */}
+      <div
+        ref={tabsContainerRef}
+        className="flex overflow-x-auto border-b border-violet-100"
+        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}
+      >
+        {allRounds.map(({ round, isCurrent }) => (
+          <button
+            key={round}
+            ref={el => { tabRefs.current[round] = el; }}
+            onClick={() => setActiveTab(round)}
+            className={`flex-shrink-0 px-4 py-2.5 text-xs font-bold transition-colors border-b-2 ${
+              activeTab === round
+                ? 'text-violet-700 border-violet-500 bg-violet-50'
+                : 'text-violet-400 border-transparent hover:text-violet-600'
+            }`}
+          >
+            第{round}轮
+            {isCurrent && (
+              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[9px] leading-none align-middle ${
+                activeTab === round
+                  ? 'bg-violet-500 text-white'
+                  : 'bg-violet-100 text-violet-500'
+              }`}>
+                当前
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* 查看历史提示栏 */}
+      {isViewingHistory && (
+        <div className="flex items-center justify-between px-4 py-1.5 bg-amber-50 border-b border-amber-100">
+          <span className="text-xs text-amber-600">正在查看历史发言</span>
+          <button
+            onClick={() => setActiveTab(currentRound)}
+            className="text-xs font-bold text-violet-600 active:opacity-70"
+          >
+            回到第{currentRound}轮 →
+          </button>
+        </div>
+      )}
+
+      {/* 发言内容区 */}
+      <div className="p-4 space-y-2.5 min-h-[72px]">
+        {activeRoundData?.speeches.length > 0 ? (
+          activeRoundData.speeches.map(({ id, name, speech }) => (
+            <div key={id} className="flex items-start gap-2 text-sm">
+              <span className="font-bold text-violet-600 shrink-0 whitespace-nowrap">
+                {name}{id === playerId ? '(我)' : ''}：
+              </span>
+              {speech.type === 'text' ? (
+                <span className="text-gray-700 break-words">{speech.content}</span>
+              ) : (
+                <audio src={speech.content} controls className="h-8 max-w-[180px]" />
+              )}
+            </div>
+          ))
+        ) : (
+          <p className="text-xs text-violet-300 text-center py-2">
+            {phase === 'speaking' && activeTab === currentRound ? '等待发言中...' : '暂无发言'}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

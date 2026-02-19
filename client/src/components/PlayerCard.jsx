@@ -21,7 +21,7 @@ export default function PlayerCard({
 }) {
   const alive = player.alive !== false;
   const online = player.online !== false;
-  const avatar = getAvatar(player.id);
+  const avatar = player.avatar || getAvatar(player.id);
 
   return (
     <div

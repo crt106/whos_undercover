@@ -147,6 +147,10 @@ const disconnectTimers = new Map();
 const gameDisconnectTimers = new Map();
 // 游戏中掉线最终等待时间（秒）
 const GAME_DISCONNECT_TIMEOUT = 60;
+// 卧底猜词计时器：roomId → timeout
+const guessTimers = new Map();
+// 卧底猜词时间（秒）
+const UNDERCOVER_GUESS_TIMEOUT = 30;
 
 const gameIo = io.of('/game');
 
@@ -162,9 +166,9 @@ gameIo.use((socket, next) => {
 gameIo.on('connection', (socket) => {
   console.log('Connected:', socket.id);
 
-  socket.on('create-room', ({ playerName, playerId }, callback) => {
+  socket.on('create-room', ({ playerName, playerId, playerAvatar }, callback) => {
     const room = createRoom(playerId);
-    const result = room.addPlayer(playerId, playerName);
+    const result = room.addPlayer(playerId, playerName, playerAvatar);
     if (result.error) {
       callback({ error: result.error });
       return;
@@ -176,7 +180,7 @@ gameIo.on('connection', (socket) => {
     gameIo.to(room.id).emit('room-update', room.getPublicState());
   });
 
-  socket.on('join-room', ({ roomId, playerName, playerId }, callback) => {
+  socket.on('join-room', ({ roomId, playerName, playerId, playerAvatar }, callback) => {
     const room = getRoom(roomId);
     if (!room) {
       callback({ error: '房间不存在' });
@@ -214,7 +218,7 @@ gameIo.on('connection', (socket) => {
       return;
     }
 
-    const result = room.addPlayer(playerId, playerName);
+    const result = room.addPlayer(playerId, playerName, playerAvatar);
     if (result.error) {
       callback({ error: result.error });
       return;
@@ -359,6 +363,44 @@ gameIo.on('connection', (socket) => {
     gameIo.to(room.id).emit('vote-result', result);
     gameIo.to(room.id).emit('room-update', room.getPublicState());
 
+    // 若触发卧底猜词阶段，启动超时计时器
+    if (result.gameOver?.guessRequired) {
+      const guessTimer = setTimeout(() => {
+        guessTimers.delete(room.id);
+        const currentRoom = getRoom(room.id);
+        if (!currentRoom || currentRoom.phase !== PHASE.UNDERCOVER_GUESS) return;
+        const timeoutResult = currentRoom.timeoutUndercoverGuess();
+        if (timeoutResult) {
+          gameIo.to(room.id).emit('undercover-guess-result', timeoutResult);
+          gameIo.to(room.id).emit('room-update', currentRoom.getPublicState());
+        }
+      }, UNDERCOVER_GUESS_TIMEOUT * 1000);
+      guessTimers.set(room.id, guessTimer);
+    }
+
+    if (callback) callback({ success: true, result });
+  });
+
+  socket.on('submit-undercover-guess', ({ guess }, callback) => {
+    const info = socketMap.get(socket.id);
+    if (!info) return;
+    const room = getRoom(info.roomId);
+    if (!room || room.phase !== PHASE.UNDERCOVER_GUESS) return;
+
+    const result = room.submitUndercoverGuess(info.playerId, guess);
+    if (result.error) {
+      if (callback) callback({ error: result.error });
+      return;
+    }
+
+    // 清除猜词计时器
+    if (guessTimers.has(room.id)) {
+      clearTimeout(guessTimers.get(room.id));
+      guessTimers.delete(room.id);
+    }
+
+    gameIo.to(info.roomId).emit('undercover-guess-result', result);
+    gameIo.to(info.roomId).emit('room-update', room.getPublicState());
     if (callback) callback({ success: true, result });
   });
 
@@ -379,6 +421,12 @@ gameIo.on('connection', (socket) => {
     if (!info) return;
     const room = getRoom(info.roomId);
     if (!room || info.playerId !== room.hostId) return;
+
+    // 清除可能残留的猜词计时器
+    if (guessTimers.has(room.id)) {
+      clearTimeout(guessTimers.get(room.id));
+      guessTimers.delete(room.id);
+    }
 
     room.resetForNewGame();
     gameIo.to(room.id).emit('room-update', room.getPublicState());
@@ -462,6 +510,12 @@ function startGameDisconnectTimer(roomId, playerId) {
 
     const disconnectedPlayer = currentRoom.players.find(p => p.id === playerId);
     console.log('Game disconnect timeout, aborting game. Player:', disconnectedPlayer?.name);
+
+    // 清除可能残留的猜词计时器
+    if (guessTimers.has(roomId)) {
+      clearTimeout(guessTimers.get(roomId));
+      guessTimers.delete(roomId);
+    }
 
     // 中止游戏，移除掉线玩家，回到等待
     currentRoom.abortGame(playerId);
