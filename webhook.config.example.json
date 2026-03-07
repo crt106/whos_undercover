@@ -1,0 +1,28 @@
+{
+  "http": {
+    "enabled": false,
+    "url": "https://example.com/webhook",
+    "timeout": 5000,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "events": {
+      "game_start": {
+        "enabled": true
+      }
+    }
+  },
+  "napcat_qq": {
+    "enabled": false,
+    "base_url": "http://127.0.0.1:6099",
+    "token": "your_napcat_token_here",
+    "group_id": "123456789",
+    "timeout": 5000,
+    "message_template": "🕵️ 谁是卧底开局通知\n房间号: {{roomId}}\n房主: {{hostName}}\n人数: {{playerCount}}\n卧底数: {{undercoverCount}}\n开始时间: {{startTime}}",
+    "events": {
+      "game_start": {
+        "enabled": true
+      }
+    }
+  }
+}

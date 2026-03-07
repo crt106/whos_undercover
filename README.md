@@ -18,6 +18,7 @@
 - 👁️ **观战系统**：房间列表展示游戏中的房间，非玩家可申请观战，房主审批（10秒自动拒绝）后进入旁观视角
 - ⏱️ **房间自动回收**：等待中或游戏结束状态超过 1 小时无活动，自动关闭房间并通知所有人
 - 🔴 **房主强制关闭**：游戏进行中房主可一键关闭房间，二次确认后立即解散
+- 🔔 **Webhook 通知**：游戏开始时可向外部平台发送通知，方便其他用户观战
 
 ## 技术栈
 
@@ -71,6 +72,85 @@ GAME_PASSWORD=your_password_here
 ```
 
 也可以通过 URL 参数访问：`http://your-domain/?password=your_password` 或 `?pwd=your_password`
+
+### Webhook 配置
+
+项目根目录的 `webhook.config.json` 用于配置游戏事件的外部通知推送，支持两种渠道：通用 HTTP 和 NapCat QQ 群消息。
+
+```bash
+# 复制示例配置
+cp webhook.config.example.json webhook.config.json
+# 编辑 webhook.config.json，按需开启并填写参数
+```
+
+```json
+{
+  "http": {
+    "enabled": false,
+    "url": "https://example.com/webhook",
+    "timeout": 5000,
+    "headers": { "Content-Type": "application/json" },
+    "events": {
+      "game_start": { "enabled": true }
+    }
+  },
+  "napcat_qq": {
+    "enabled": false,
+    "base_url": "http://127.0.0.1:6099",
+    "token": "your_napcat_token_here",
+    "group_id": "123456789",
+    "timeout": 5000,
+    "message_template": "🕵️ 谁是卧底开局通知\n房间号: {{roomId}}\n房主: {{hostName}}\n人数: {{playerCount}}\n卧底数: {{undercoverCount}}\n开始时间: {{startTime}}",
+    "events": {
+      "game_start": { "enabled": true }
+    }
+  }
+}
+```
+
+#### HTTP 通用 Webhook
+
+| 字段 | 说明 |
+|------|------|
+| `http.enabled` | 总开关 |
+| `http.url` | 接收地址 |
+| `http.timeout` | 请求超时（毫秒） |
+| `http.headers` | 自定义请求头 |
+| `http.events.<事件名>.enabled` | 单个事件开关 |
+
+`game_start` 事件请求体示例：
+
+```json
+{
+  "event": "game_start",
+  "timestamp": "2026-03-07T12:00:00.000Z",
+  "data": {
+    "roomId": "123456",
+    "hostName": "玩家A",
+    "playerCount": 6,
+    "undercoverCount": 1,
+    "startTime": "2026-03-07T12:00:00.000Z",
+    "players": [
+      { "name": "玩家A", "avatar": null },
+      { "name": "玩家B", "avatar": null }
+    ]
+  }
+}
+```
+
+#### NapCat QQ 群消息
+
+通过 NapCat 的 `/send_group_msg` 接口向 QQ 群发送游戏通知。
+
+| 字段 | 说明 |
+|------|------|
+| `napcat_qq.enabled` | 总开关 |
+| `napcat_qq.base_url` | NapCat HTTP API 地址 |
+| `napcat_qq.token` | Bearer Token 鉴权令牌 |
+| `napcat_qq.group_id` | 目标 QQ 群号 |
+| `napcat_qq.timeout` | 请求超时（毫秒） |
+| `napcat_qq.message_template` | 消息模板，支持 `{{roomId}}` `{{hostName}}` `{{playerCount}}` `{{undercoverCount}}` `{{startTime}}` 占位符 |
+| `napcat_qq.events.<事件名>.enabled` | 单个事件开关 |
 
 开发模式下后端运行在 `http://localhost:3001`，前端运行在 `http://localhost:5173`。
 

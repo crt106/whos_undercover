@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { createRoom, getRoom, deleteRoom, PHASE } = require('./game');
+const { sendWebhook } = require('./webhook');
 
 const app = express();
 const server = http.createServer(app);
@@ -285,6 +286,17 @@ gameIo.on('connection', (socket) => {
     });
 
     gameIo.to(room.id).emit('room-update', room.getPublicState());
+
+    // 发送游戏开始 webhook
+    const host = room.players.find(p => p.id === room.hostId);
+    sendWebhook('game_start', {
+      roomId: room.id,
+      hostName: host ? host.name : '未知',
+      playerCount: room.players.length,
+      undercoverCount: room.undercoverCount,
+      startTime: new Date().toISOString(),
+      players: room.players.map(p => ({ name: p.name, avatar: p.avatar })),
+    });
 
     // 30秒准备时间后开始发言
     room._playingTimer = setTimeout(() => {
