@@ -2,7 +2,15 @@ import { useState, useEffect, useRef } from 'react';
 
 const AVATAR_OPTIONS = ['🐱', '🐶', '🐰', '🦊', '🐻', '🐼', '🐨', '🦁', '🐸', '🐵', '🐔', '🐧', '🦄', '🐯', '🐮', '🐷', '🐙', '🦋', '🐢'];
 
-export default function Home({ playerName: initialName, playerAvatar: initialAvatar, connected, onCreateRoom, onJoinRoom }) {
+const PHASE_LABEL = {
+  playing: '准备中',
+  speaking: '发言中',
+  voting: '投票中',
+  result: '结果揭晓',
+  undercover_guess: '猜词中',
+};
+
+export default function Home({ playerName: initialName, playerAvatar: initialAvatar, connected, onCreateRoom, onJoinRoom, onSpectate, spectateStatus }) {
   const [name, setName] = useState(initialName || '');
   const [avatar, setAvatar] = useState(initialAvatar || AVATAR_OPTIONS[0]);
   const [roomCode, setRoomCode] = useState('');
@@ -84,6 +92,10 @@ export default function Home({ playerName: initialName, playerAvatar: initialAva
   const handleJoinRoom = (roomId) => {
     if (!name.trim()) return;
     onJoinRoom(name.trim(), roomId, avatar);
+  };
+
+  const handleSpectate = (roomId) => {
+    if (onSpectate) onSpectate(roomId);
   };
 
   // 麦克风测试相关函数
@@ -365,28 +377,60 @@ export default function Home({ playerName: initialName, playerAvatar: initialAva
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
-                {currentRooms.map((room) => (
-                  <div key={room.id} className="p-4 hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-medium text-gray-900">#{room.id}</span>
-                          <span className="text-sm text-gray-500">房主: {room.hostName}</span>
+                {currentRooms.map((room) => {
+                  const isInGame = room.phase !== 'waiting';
+                  const isPending = spectateStatus?.pendingRoomId === room.id;
+                  const isRejected = spectateStatus?.rejectedRoomIds?.has(room.id);
+                  return (
+                    <div key={room.id} className={`p-4 transition-colors ${isInGame ? 'bg-slate-50 hover:bg-slate-100' : 'hover:bg-gray-50'}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-gray-900">#{room.id}</span>
+                            <span className="text-sm text-gray-500">房主: {room.hostName}</span>
+                            {isInGame && (
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full font-bold">
+                                {PHASE_LABEL[room.phase] || '游戏中'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-400 mt-1 flex items-center gap-2">
+                            <span>玩家 {room.playerCount}/{room.maxPlayers}</span>
+                            {room.spectatorCount > 0 && (
+                              <span className="text-violet-400">👁 {room.spectatorCount} 人观战</span>
+                            )}
+                          </div>
+                          {isRejected && (
+                            <p className="text-xs text-red-500 mt-1">观战申请已被拒绝</p>
+                          )}
                         </div>
-                        <div className="text-sm text-gray-400 mt-1">
-                          {room.playerCount}/{room.maxPlayers} 人
-                        </div>
+                        {isInGame ? (
+                          <button
+                            className={`ml-3 px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
+                              isRejected
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : isPending
+                                  ? 'bg-violet-100 text-violet-400 cursor-not-allowed'
+                                  : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
+                            }`}
+                            onClick={() => !isRejected && !isPending && handleSpectate(room.id)}
+                            disabled={!connected || isRejected || isPending}
+                          >
+                            {isRejected ? '已拒绝' : isPending ? '申请中...' : '观战'}
+                          </button>
+                        ) : (
+                          <button
+                            className="ml-3 px-4 py-2 bg-violet-500 text-white rounded-xl hover:bg-violet-600 transition-colors text-sm font-bold active:scale-95"
+                            onClick={() => handleJoinRoom(room.id)}
+                            disabled={!connected}
+                          >
+                            加入
+                          </button>
+                        )}
                       </div>
-                      <button
-                        className="px-4 py-2 bg-violet-500 text-white rounded-xl hover:bg-violet-600 transition-colors text-sm"
-                        onClick={() => handleJoinRoom(room.id)}
-                        disabled={!connected}
-                      >
-                        加入
-                      </button>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

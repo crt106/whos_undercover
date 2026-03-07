@@ -2,7 +2,7 @@ import { useState } from 'react';
 import socket from '../socket';
 import PlayerCard from '../components/PlayerCard';
 
-export default function Room({ roomState, playerId, onLeave }) {
+export default function Room({ roomState, playerId, isSpectator, onLeave }) {
   const [copied, setCopied] = useState(false);
   const isHost = playerId === roomState.hostId;
   const me = roomState.players.find(p => p.id === playerId);
@@ -47,6 +47,13 @@ export default function Room({ roomState, playerId, onLeave }) {
         </div>
       </div>
 
+      {/* 观战者标识 */}
+      {isSpectator && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-2.5 text-center">
+          <p className="text-sm font-bold text-blue-600">👁 观战模式 · 仅可观看，无法参与游戏</p>
+        </div>
+      )}
+
       {/* 玩家列表 */}
       <div>
         <p className="text-sm text-violet-400 mb-3 text-center">
@@ -77,6 +84,21 @@ export default function Room({ roomState, playerId, onLeave }) {
         </div>
       </div>
 
+      {/* 观战者列表 */}
+      {roomState.spectators?.length > 0 && (
+        <div>
+          <p className="text-sm text-violet-400 mb-2 text-center">观战者 ({roomState.spectators.length})</p>
+          <div className="flex flex-wrap gap-2 justify-center">
+            {roomState.spectators.map(s => (
+              <div key={s.id} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-blue-50 border border-blue-100 ${s.online === false ? 'opacity-40' : ''}`}>
+                <span>{s.avatar || '👤'}</span>
+                <span className="text-blue-600">{s.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 房主设置 */}
       {isHost && (
         <div className="bg-violet-50 rounded-2xl p-4 space-y-3">
@@ -101,7 +123,7 @@ export default function Room({ roomState, playerId, onLeave }) {
 
       {/* 操作按钮 */}
       <div className="space-y-3">
-        {!isHost && (
+        {!isSpectator && !isHost && (
           <button
             className={me?.ready ? 'btn-secondary' : 'btn-primary'}
             onClick={toggleReady}
@@ -109,7 +131,7 @@ export default function Room({ roomState, playerId, onLeave }) {
             {me?.ready ? '取消准备' : '准备'}
           </button>
         )}
-        {isHost && (
+        {!isSpectator && isHost && (
           <button
             className="btn-primary"
             onClick={startGame}
@@ -119,7 +141,7 @@ export default function Room({ roomState, playerId, onLeave }) {
           </button>
         )}
         <button className="btn-secondary text-base" onClick={onLeave}>
-          离开房间
+          {isSpectator ? '退出观战' : '离开房间'}
         </button>
       </div>
     </div>

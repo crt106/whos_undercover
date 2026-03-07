@@ -43,6 +43,8 @@ class Room {
     this.guessingUndercoverId = null;  // 正在猜词的卧底ID
     this.guessResult = null;           // 猜词结果 { playerId, guess, correct, timeout }
     this.speechHistory = [];           // 历史发言记录 [{ round, speeches: [{id, name, speech}] }]
+    this.inactiveStartTime = Date.now(); // 进入非活跃状态（waiting/game_over）的时间戳
+    this.spectators = [];              // 观战者列表 [{ id, name, avatar, online }]
   }
 
   addPlayer(id, name, avatar) {
@@ -89,6 +91,21 @@ class Room {
   setOnline(playerId, online) {
     const player = this.players.find(p => p.id === playerId);
     if (player) player.online = online;
+  }
+
+  addSpectator(id, name, avatar) {
+    if (this.spectators.find(s => s.id === id)) return;
+    this.spectators.push({ id, name, avatar: avatar || null, online: true });
+  }
+
+  removeSpectator(id) {
+    const idx = this.spectators.findIndex(s => s.id === id);
+    if (idx !== -1) this.spectators.splice(idx, 1);
+  }
+
+  setSpectatorOnline(id, online) {
+    const s = this.spectators.find(s => s.id === id);
+    if (s) s.online = online;
   }
 
   setReady(playerId, ready) {
@@ -149,6 +166,7 @@ class Room {
     this.changeWordVotes = new Set();
     this.wordChanged = false;
     this.speechHistory = [];
+    this.inactiveStartTime = null; // 游戏进行中，不计入非活跃时间
 
     return { success: true };
   }
@@ -331,12 +349,14 @@ class Room {
       // 兜底：直接平民胜
       this.winner = 'civilian';
       this.phase = PHASE.GAME_OVER;
+      this.inactiveStartTime = Date.now();
       return { winner: 'civilian', civilianWord: this.civilianWord, undercoverWord: this.undercoverWord };
     }
 
     if (aliveUndercover >= aliveCivilian) {
       this.winner = 'undercover';
       this.phase = PHASE.GAME_OVER;
+      this.inactiveStartTime = Date.now();
       return { winner: 'undercover', civilianWord: this.civilianWord, undercoverWord: this.undercoverWord };
     }
 
@@ -355,6 +375,7 @@ class Room {
     this.guessResult = { playerId, guess: normalizedGuess, correct, timeout: false };
     this.winner = correct ? 'undercover' : 'civilian';
     this.phase = PHASE.GAME_OVER;
+    this.inactiveStartTime = Date.now();
 
     return {
       correct,
@@ -372,6 +393,7 @@ class Room {
     this.guessResult = { playerId: this.guessingUndercoverId, guess: null, correct: false, timeout: true };
     this.winner = 'civilian';
     this.phase = PHASE.GAME_OVER;
+    this.inactiveStartTime = Date.now();
 
     return {
       correct: false,
@@ -417,6 +439,12 @@ class Room {
         // 只在游戏结束时暴露角色
         role: this.phase === PHASE.GAME_OVER ? p.role : (p.alive ? null : p.role),
       })),
+      spectators: this.spectators.map(s => ({
+        id: s.id,
+        name: s.name,
+        avatar: s.avatar,
+        online: s.online,
+      })),
     };
   }
 
@@ -434,6 +462,7 @@ class Room {
   abortGame(disconnectedPlayerId) {
     this.removePlayer(disconnectedPlayerId);
     this.phase = PHASE.WAITING;
+    this.inactiveStartTime = Date.now();
     this.round = 0;
     this.currentSpeakerIndex = -1;
     this.civilianWord = '';
@@ -460,6 +489,7 @@ class Room {
 
   resetForNewGame() {
     this.phase = PHASE.WAITING;
+    this.inactiveStartTime = Date.now();
     this.round = 0;
     this.currentSpeakerIndex = -1;
     this.civilianWord = '';

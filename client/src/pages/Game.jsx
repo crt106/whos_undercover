@@ -6,12 +6,13 @@ import VotePanel from '../components/VotePanel';
 import GameResult from '../components/GameResult';
 import Timer from '../components/Timer';
 
-export default function Game({ roomState, playerId, myWord, myRole, voteResult, setVoteResult, disconnectNotice }) {
+export default function Game({ roomState, playerId, myWord, myRole, voteResult, setVoteResult, disconnectNotice, isSpectator }) {
   const [showWord, setShowWord] = useState(false);
   const [speechText, setSpeechText] = useState('');
   const [myVote, setMyVote] = useState(null);
   const [showResult, setShowResult] = useState(false);
   const [guessText, setGuessText] = useState('');
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
 
   const isHost = playerId === roomState.hostId;
   const me = roomState.players.find(p => p.id === playerId);
@@ -75,6 +76,13 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
     socket.emit('play-again');
   };
 
+  const forceCloseRoom = () => {
+    setShowExitConfirm(false);
+    socket.emit('force-close-room', {}, (res) => {
+      if (res?.error) console.error('force-close-room error:', res.error);
+    });
+  };
+
   // 换词仅在准备阶段
   const canChangeWord = !roomState.wordChanged && roomState.phase === 'playing';
   const hasVotedChange = roomState.changeWordVoters?.includes(playerId);
@@ -100,6 +108,62 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
 
   return (
     <div className="space-y-4 animate-fade-in">
+      {/* 房主强制关闭房间按钮 */}
+      {isHost && !isSpectator && (
+        <button
+          className="fixed top-4 right-4 z-30 w-10 h-10 rounded-full bg-red-500 hover:bg-red-600 active:scale-90 transition-all shadow-lg flex items-center justify-center"
+          onClick={() => setShowExitConfirm(true)}
+          title="关闭房间"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+            <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" />
+            <line x1="12" y1="2" x2="12" y2="12" />
+          </svg>
+        </button>
+      )}
+
+      {/* 二次确认弹窗 */}
+      {showExitConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowExitConfirm(false)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-xs space-y-4 animate-bounce-in" onClick={e => e.stopPropagation()}>
+            <div className="text-center space-y-2">
+              <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-7 h-7">
+                  <path d="M18.36 6.64A9 9 0 1 1 5.64 6.64" />
+                  <line x1="12" y1="2" x2="12" y2="12" />
+                </svg>
+              </div>
+              <p className="text-lg font-black text-gray-800">确认关闭房间？</p>
+              <p className="text-sm text-gray-500">游戏将立即中止，所有玩家和观战者都会被移出房间，此操作不可撤销。</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                className="flex-1 py-2.5 rounded-xl bg-gray-100 text-gray-600 font-bold text-sm active:scale-95 transition-all"
+                onClick={() => setShowExitConfirm(false)}
+              >
+                取消
+              </button>
+              <button
+                className="flex-1 py-2.5 rounded-xl bg-red-500 text-white font-bold text-sm active:scale-95 transition-all"
+                onClick={forceCloseRoom}
+              >
+                确认关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 观战模式标识 */}
+      {isSpectator && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-2.5 flex items-center justify-between">
+          <span className="text-sm font-bold text-blue-600">👁 观战模式</span>
+          {roomState.spectators?.length > 0 && (
+            <span className="text-xs text-blue-400">{roomState.spectators.length} 人在观战</span>
+          )}
+        </div>
+      )}
+
       {/* 掉线等待横幅 */}
       {disconnectNotice && (
         <DisconnectBanner
@@ -118,29 +182,27 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       )}
 
       {/* 顶部信息 */}
-      <div className={`rounded-2xl p-4 shadow-md transition-colors duration-300 ${
-        roomState.phase === 'playing'
+      <div className={`rounded-2xl p-4 shadow-md transition-colors duration-300 ${roomState.phase === 'playing'
           ? 'bg-amber-50 border border-amber-200'
           : roomState.phase === 'speaking'
-          ? 'bg-blue-50 border border-blue-200'
-          : roomState.phase === 'voting'
-          ? 'bg-rose-50 border border-rose-200'
-          : roomState.phase === 'undercover_guess'
-          ? 'bg-red-50 border border-red-300'
-          : 'card !p-4'
-      }`}>
+            ? 'bg-blue-50 border border-blue-200'
+            : roomState.phase === 'voting'
+              ? 'bg-rose-50 border border-rose-200'
+              : roomState.phase === 'undercover_guess'
+                ? 'bg-red-50 border border-red-300'
+                : 'card !p-4'
+        }`}>
         <div className="flex items-center justify-between">
-          <span className={`text-sm font-bold ${
-            roomState.phase === 'playing'
+          <span className={`text-sm font-bold ${roomState.phase === 'playing'
               ? 'text-amber-700'
               : roomState.phase === 'speaking'
-              ? 'text-blue-700'
-              : roomState.phase === 'voting'
-              ? 'text-rose-700'
-              : roomState.phase === 'undercover_guess'
-              ? 'text-red-700'
-              : 'text-violet-700'
-          }`}>
+                ? 'text-blue-700'
+                : roomState.phase === 'voting'
+                  ? 'text-rose-700'
+                  : roomState.phase === 'undercover_guess'
+                    ? 'text-red-700'
+                    : 'text-violet-700'
+            }`}>
             {roomState.phase === 'playing' ? '⏳ ' : roomState.phase === 'speaking' ? '💬 ' : roomState.phase === 'voting' ? '🗳️ ' : roomState.phase === 'undercover_guess' ? '🕵️ ' : ''}
             {phaseLabel[roomState.phase] || ''}
           </span>
@@ -181,11 +243,10 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
           {canChangeWord && (
             <div className="mt-3 space-y-2">
               <button
-                className={`px-5 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 ${
-                  hasVotedChange
+                className={`px-5 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 ${hasVotedChange
                     ? 'bg-orange-100 text-orange-500 border border-orange-300'
                     : 'bg-orange-500 text-white shadow-md'
-                }`}
+                  }`}
                 onClick={voteChangeWord}
                 disabled={hasVotedChange}
               >
@@ -238,34 +299,55 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
         />
       )}
 
-      {/* 发言输入（自己的回合） */}
-      {roomState.phase === 'speaking' && isMyTurn && me?.alive && (
-        <div className="card !p-4 space-y-3 animate-bounce-in">
-          <p className="text-sm font-bold text-violet-700 text-center">轮到你发言了！</p>
+      {/* 发言输入区域（speaking 阶段，存活玩家均可见） */}
+      {roomState.phase === 'speaking' && me?.alive && !isSpectator && (
+        <div className={`card !p-4 space-y-3 ${isMyTurn ? 'animate-bounce-in' : 'animate-fade-in'}`}>
+          {isMyTurn ? (
+            <p className="text-sm font-bold text-violet-700 text-center">轮到你发言了！</p>
+          ) : currentSpeaker ? (
+            <div className="text-center space-y-1">
+              <p className="text-violet-500 text-sm">
+                等待 <span className="font-bold">{currentSpeaker.name}</span> 发言...
+              </p>
+              <p className="text-xs text-violet-400">💡 可以先输入内容，轮到你时即可发送</p>
+            </div>
+          ) : null}
           <div className="flex gap-2">
             <input
               type="text"
               className="input-field !text-left !text-base flex-1"
-              placeholder="输入你的描述..."
+              placeholder={isMyTurn ? '输入你的描述...' : '提前准备你的发言...'}
               value={speechText}
               onChange={(e) => setSpeechText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submitTextSpeech()}
+              onKeyDown={(e) => e.key === 'Enter' && isMyTurn && submitTextSpeech()}
               maxLength={100}
             />
             <button
-              className="px-4 rounded-2xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-bold active:scale-95 transition-all disabled:opacity-50"
+              className={`px-4 rounded-2xl font-bold transition-all disabled:opacity-50 ${isMyTurn
+                  ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white active:scale-95'
+                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                }`}
               onClick={submitTextSpeech}
-              disabled={!speechText.trim()}
+              disabled={!isMyTurn || !speechText.trim()}
             >
               发送
             </button>
           </div>
-          <VoiceRecorder onRecorded={submitVoiceSpeech} />
+          {isMyTurn && <VoiceRecorder onRecorded={submitVoiceSpeech} />}
         </div>
       )}
 
-      {/* 等待发言 */}
-      {roomState.phase === 'speaking' && !isMyTurn && currentSpeaker && (
+      {/* 观战者发言进度提示 */}
+      {roomState.phase === 'speaking' && isSpectator && currentSpeaker && (
+        <div className="card !p-4 text-center">
+          <p className="text-violet-500 text-sm">
+            <span className="font-bold">{currentSpeaker.name}</span> 正在发言...
+          </p>
+        </div>
+      )}
+
+      {/* 等待发言（已死亡的玩家看到的提示） */}
+      {roomState.phase === 'speaking' && !me?.alive && !isSpectator && currentSpeaker && (
         <div className="card !p-4 text-center">
           <p className="text-violet-500">
             等待 <span className="font-bold">{currentSpeaker.name}</span> 发言...
@@ -274,7 +356,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       )}
 
       {/* 投票面板 */}
-      {roomState.phase === 'voting' && me?.alive && (
+      {roomState.phase === 'voting' && me?.alive && !isSpectator && (
         <VotePanel
           players={roomState.players}
           playerId={playerId}
@@ -284,7 +366,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       )}
 
       {/* 卧底最后猜词 */}
-      {roomState.phase === 'undercover_guess' && isGuessingUndercover && (
+      {roomState.phase === 'undercover_guess' && isGuessingUndercover && !isSpectator && (
         <div className="card !p-4 space-y-3 animate-bounce-in border-2 border-red-300">
           <p className="text-sm font-bold text-red-700 text-center">🕵️ 你的最后一次机会！</p>
           <p className="text-xs text-red-500 text-center">猜出平民的词语，卧底即可翻盘获胜！</p>
@@ -309,7 +391,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
           </div>
         </div>
       )}
-      {roomState.phase === 'undercover_guess' && !isGuessingUndercover && guessingPlayer && (
+      {roomState.phase === 'undercover_guess' && (!isGuessingUndercover || isSpectator) && guessingPlayer && (
         <div className="card !p-4 text-center space-y-1">
           <p className="text-violet-600 text-sm">
             🕵️ <span className="font-bold">{guessingPlayer.name}</span> 正在尝试猜出平民词语...
@@ -359,7 +441,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
               <p>卧底词：<span className="font-bold text-red-500">{roomState.undercoverWord}</span></p>
             </div>
           )}
-          {isHost && (
+          {isHost && !isSpectator && (
             <button className="btn-primary" onClick={playAgain}>
               再来一局
             </button>
@@ -429,19 +511,17 @@ function SpeechHistoryTabs({ speechHistory, currentRound, currentSpeeches, playe
             key={round}
             ref={el => { tabRefs.current[round] = el; }}
             onClick={() => setActiveTab(round)}
-            className={`flex-shrink-0 px-4 py-2.5 text-xs font-bold transition-colors border-b-2 ${
-              activeTab === round
+            className={`flex-shrink-0 px-4 py-2.5 text-xs font-bold transition-colors border-b-2 ${activeTab === round
                 ? 'text-violet-700 border-violet-500 bg-violet-50'
                 : 'text-violet-400 border-transparent hover:text-violet-600'
-            }`}
+              }`}
           >
             第{round}轮
             {isCurrent && (
-              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[9px] leading-none align-middle ${
-                activeTab === round
+              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[9px] leading-none align-middle ${activeTab === round
                   ? 'bg-violet-500 text-white'
                   : 'bg-violet-100 text-violet-500'
-              }`}>
+                }`}>
                 当前
               </span>
             )}

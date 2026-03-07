@@ -107,22 +107,29 @@ app.get('/api/voice/:filename', (req, res) => {
   res.sendFile(filePath);
 });
 
+// 可被观战的游戏中阶段
+const SPECTATABLE_PHASES = ['playing', 'speaking', 'voting', 'result', 'undercover_guess'];
+
 // 房间列表 API
 app.get('/api/rooms', (req, res) => {
   const { rooms } = require('./game');
   const roomList = [];
 
   for (const [roomId, room] of rooms.entries()) {
-    if (room.phase === 'waiting' && room.players.length > 0) {
-      const host = room.players.find(p => p.id === room.hostId);
-      roomList.push({
-        id: roomId,
-        hostName: host ? host.name : '未知',
-        playerCount: room.players.length,
-        maxPlayers: 12,
-        phase: room.phase
-      });
-    }
+    const isWaiting = room.phase === 'waiting' && room.players.length > 0;
+    const isSpectable = SPECTATABLE_PHASES.includes(room.phase);
+
+    if (!isWaiting && !isSpectable) continue;
+
+    const host = room.players.find(p => p.id === room.hostId);
+    roomList.push({
+      id: roomId,
+      hostName: host ? host.name : '未知',
+      playerCount: room.players.length,
+      maxPlayers: 12,
+      phase: room.phase,
+      spectatorCount: room.spectators.length,
+    });
   }
 
   // 按房间创建时间排序（房间号越小越早创建）
@@ -151,6 +158,12 @@ const GAME_DISCONNECT_TIMEOUT = 60;
 const guessTimers = new Map();
 // 卧底猜词时间（秒）
 const UNDERCOVER_GUESS_TIMEOUT = 30;
+// 房间非活跃超时时间（毫秒）：1小时
+const ROOM_INACTIVE_TIMEOUT = 60 * 60 * 1000;
+// 房间超时检查间隔（毫秒）：5分钟
+const ROOM_CHECK_INTERVAL = 5 * 60 * 1000;
+// 待审批的观战请求：roomId → Map<playerId, { socketId, name, avatar }>
+const pendingSpectatorRequests = new Map();
 
 const gameIo = io.of('/game');
 
@@ -433,10 +446,135 @@ gameIo.on('connection', (socket) => {
     gameIo.to(room.id).emit('game-reset');
   });
 
+  // 房主强制关闭房间
+  socket.on('force-close-room', (_, callback) => {
+    const info = socketMap.get(socket.id);
+    if (!info || info.isSpectator) { if (callback) callback({ error: '无权操作' }); return; }
+    const room = getRoom(info.roomId);
+    if (!room || info.playerId !== room.hostId) { if (callback) callback({ error: '无权操作' }); return; }
+
+    const roomId = info.roomId;
+    console.log(`Host force-closed room ${roomId}`);
+
+    // 清理该房间所有计时器
+    for (const [key] of disconnectTimers.entries()) {
+      if (key.startsWith(`${roomId}:`)) {
+        clearTimeout(disconnectTimers.get(key));
+        disconnectTimers.delete(key);
+      }
+    }
+    for (const [key] of gameDisconnectTimers.entries()) {
+      if (key.startsWith(`${roomId}:`)) {
+        clearTimeout(gameDisconnectTimers.get(key));
+        gameDisconnectTimers.delete(key);
+      }
+    }
+    if (guessTimers.has(roomId)) {
+      clearTimeout(guessTimers.get(roomId));
+      guessTimers.delete(roomId);
+    }
+    if (room._playingTimer) clearTimeout(room._playingTimer);
+    pendingSpectatorRequests.delete(roomId);
+
+    // 直接遍历 socketMap 逐个通知，绕开 socket.io room 成员可能不一致的问题
+    const reason = '房主已关闭房间';
+    for (const [sid, sInfo] of socketMap.entries()) {
+      if (sInfo.roomId === roomId) {
+        gameIo.sockets.get(sid)?.emit('room-closed', { reason });
+      }
+    }
+
+    deleteRoom(roomId);
+    if (callback) callback({ success: true });
+  });
+
+  // 申请观战
+  socket.on('request-spectate', ({ roomId, playerName, playerId, playerAvatar }, callback) => {
+    const room = getRoom(roomId);
+    if (!room) { callback({ error: '房间不存在' }); return; }
+    if (!SPECTATABLE_PHASES.includes(room.phase)) { callback({ error: '该房间当前不可观战' }); return; }
+    if (room.players.find(p => p.id === playerId)) { callback({ error: '你已是游戏玩家' }); return; }
+    if (room.spectators.find(s => s.id === playerId)) { callback({ error: '你已在观战中' }); return; }
+
+    if (!pendingSpectatorRequests.has(roomId)) pendingSpectatorRequests.set(roomId, new Map());
+    pendingSpectatorRequests.get(roomId).set(playerId, { socketId: socket.id, name: playerName, avatar: playerAvatar });
+
+    const hostSockets = findPlayerSockets(roomId, room.hostId);
+    if (hostSockets.length === 0) {
+      pendingSpectatorRequests.get(roomId).delete(playerId);
+      callback({ error: '房主不在线，无法申请观战' });
+      return;
+    }
+    hostSockets.forEach(s => {
+      s.emit('spectate-request', { requesterId: playerId, requesterName: playerName, requesterAvatar: playerAvatar, roomId });
+    });
+    callback({ pending: true });
+  });
+
+  // 房主同意观战
+  socket.on('approve-spectate', ({ requesterId, roomId }) => {
+    const info = socketMap.get(socket.id);
+    if (!info) return;
+    const room = getRoom(roomId || info.roomId);
+    const effectiveRoomId = roomId || info.roomId;
+    if (!room || info.playerId !== room.hostId) return;
+
+    const pending = pendingSpectatorRequests.get(effectiveRoomId);
+    if (!pending || !pending.has(requesterId)) return;
+    const { socketId, name, avatar } = pending.get(requesterId);
+    pending.delete(requesterId);
+
+    room.addSpectator(requesterId, name, avatar);
+
+    const requesterSocket = gameIo.sockets.get(socketId);
+    if (requesterSocket) {
+      requesterSocket.join(effectiveRoomId);
+      socketMap.set(socketId, { roomId: effectiveRoomId, playerId: requesterId, isSpectator: true });
+      requesterSocket.emit('spectate-approved', { roomId: effectiveRoomId });
+    }
+    gameIo.to(effectiveRoomId).emit('room-update', room.getPublicState());
+  });
+
+  // 房主拒绝观战
+  socket.on('reject-spectate', ({ requesterId, roomId }) => {
+    const info = socketMap.get(socket.id);
+    if (!info) return;
+    const effectiveRoomId = roomId || info.roomId;
+    const room = getRoom(effectiveRoomId);
+    if (!room || info.playerId !== room.hostId) return;
+
+    const pending = pendingSpectatorRequests.get(effectiveRoomId);
+    if (!pending || !pending.has(requesterId)) return;
+    const { socketId } = pending.get(requesterId);
+    pending.delete(requesterId);
+
+    const requesterSocket = gameIo.sockets.get(socketId);
+    if (requesterSocket) {
+      requesterSocket.emit('spectate-rejected', { roomId: effectiveRoomId });
+    }
+  });
+
   socket.on('disconnect', () => {
     const info = socketMap.get(socket.id);
     if (!info) return;
     socketMap.delete(socket.id);
+
+    // 清理此 socket 的待审批观战请求
+    for (const [, requests] of pendingSpectatorRequests.entries()) {
+      for (const [pid, req] of requests.entries()) {
+        if (req.socketId === socket.id) requests.delete(pid);
+      }
+    }
+
+    // 观战者断线处理
+    if (info.isSpectator) {
+      const room = getRoom(info.roomId);
+      if (room) {
+        room.removeSpectator(info.playerId);
+        gameIo.to(info.roomId).emit('room-update', room.getPublicState());
+      }
+      return;
+    }
 
     const { roomId, playerId } = info;
     const room = getRoom(roomId);
@@ -528,6 +666,47 @@ function startGameDisconnectTimer(roomId, playerId) {
 
   gameDisconnectTimers.set(timerKey, timer);
 }
+
+// 定期检查并关闭超时的非活跃房间
+setInterval(() => {
+  const { rooms } = require('./game');
+  const now = Date.now();
+
+  for (const [roomId, room] of rooms.entries()) {
+    const isInactive = room.phase === PHASE.WAITING || room.phase === PHASE.GAME_OVER;
+    if (!isInactive || !room.inactiveStartTime) continue;
+
+    if (now - room.inactiveStartTime >= ROOM_INACTIVE_TIMEOUT) {
+      console.log(`Room ${roomId} inactive for over 1 hour, closing.`);
+
+      // 清理该房间相关的所有计时器
+      for (const [key] of disconnectTimers.entries()) {
+        if (key.startsWith(`${roomId}:`)) {
+          clearTimeout(disconnectTimers.get(key));
+          disconnectTimers.delete(key);
+        }
+      }
+      for (const [key] of gameDisconnectTimers.entries()) {
+        if (key.startsWith(`${roomId}:`)) {
+          clearTimeout(gameDisconnectTimers.get(key));
+          gameDisconnectTimers.delete(key);
+        }
+      }
+      if (guessTimers.has(roomId)) {
+        clearTimeout(guessTimers.get(roomId));
+        guessTimers.delete(roomId);
+      }
+
+      // 直接遍历 socketMap 逐个通知（绕开 socket.io room 成员不一致的问题）
+      for (const [sid, sInfo] of socketMap.entries()) {
+        if (sInfo.roomId === roomId) {
+          gameIo.sockets.get(sid)?.emit('room-closed', { reason: '房间长时间无活动，已自动关闭' });
+        }
+      }
+      deleteRoom(roomId);
+    }
+  }
+}, ROOM_CHECK_INTERVAL);
 
 function findPlayerSockets(roomId, playerId) {
   const sockets = [];

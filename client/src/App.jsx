@@ -1,4 +1,67 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+
+// 观战申请审批卡片（内置10s自动拒绝倒计时）
+function SpectateRequestCard({ req, onApprove, onReject }) {
+  const [countdown, setCountdown] = useState(10);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    timerRef.current = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current);
+          onReject(req);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timerRef.current);
+  }, []);
+
+  const handleReject = () => {
+    clearInterval(timerRef.current);
+    onReject(req);
+  };
+
+  const handleApprove = () => {
+    clearInterval(timerRef.current);
+    onApprove(req);
+  };
+
+  return (
+    <div className="bg-white border border-violet-200 rounded-2xl shadow-lg p-4 animate-fade-in">
+      <div className="flex items-center gap-3 mb-3">
+        <span className="text-2xl shrink-0">{req.requesterAvatar || '👤'}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-gray-700">
+            <span className="font-bold text-gray-900">{req.requesterName}</span>
+            {' '}申请观战你的游戏
+          </p>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button
+          className="flex-1 py-2 rounded-xl bg-violet-500 text-white text-sm font-bold active:scale-95 transition-all"
+          onClick={handleApprove}
+        >
+          同意
+        </button>
+        <button
+          className="flex-1 py-2 rounded-xl bg-gray-100 text-gray-600 text-sm font-bold active:scale-95 transition-all relative overflow-hidden"
+          onClick={handleReject}
+        >
+          {/* 倒计时进度条背景 */}
+          <span
+            className="absolute inset-0 bg-gray-200 origin-left transition-none"
+            style={{ transform: `scaleX(${countdown / 10})` }}
+          />
+          <span className="relative">拒绝 {countdown}s</span>
+        </button>
+      </div>
+    </div>
+  );
+}
 import socket from './socket';
 import GatePassword from './pages/GatePassword';
 import Home from './pages/Home';
@@ -33,6 +96,11 @@ export default function App() {
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
   const [disconnectNotice, setDisconnectNotice] = useState(null);
+  const [isSpectator, setIsSpectator] = useState(false);
+  // 观战申请状态：pendingRoomId 申请中的房间，rejectedRoomIds 被拒绝的房间集合
+  const [spectateStatus, setSpectateStatus] = useState({ pendingRoomId: null, rejectedRoomIds: new Set() });
+  // 房主待审批的观战请求列表
+  const [spectateRequests, setSpectateRequests] = useState([]);
   const pageRef = useRef(page);
   pageRef.current = page;
 
@@ -194,6 +262,45 @@ export default function App() {
       setError(reason);
     });
 
+    socket.on('room-closed', ({ reason }) => {
+      localStorage.removeItem('wuc_room_id');
+      setRoomId(null);
+      setRoomState(null);
+      setMyWord(null);
+      setMyRole(null);
+      setVoteResult(null);
+      setDisconnectNotice(null);
+      setIsSpectator(false);
+      setSpectateRequests([]);
+      setPage('home');
+      setError(reason || '房间已关闭');
+    });
+
+    // 收到观战申请（房主端）
+    socket.on('spectate-request', ({ requesterId, requesterName, requesterAvatar, roomId: reqRoomId }) => {
+      setSpectateRequests(prev => {
+        if (prev.find(r => r.requesterId === requesterId)) return prev;
+        return [...prev, { requesterId, requesterName, requesterAvatar, roomId: reqRoomId }];
+      });
+    });
+
+    // 观战申请被批准（申请者端）
+    socket.on('spectate-approved', ({ roomId: approvedRoomId }) => {
+      setRoomId(approvedRoomId);
+      setIsSpectator(true);
+      setSpectateStatus({ pendingRoomId: null, rejectedRoomIds: new Set() });
+      // 不存 localStorage，观战者不支持断线重连
+      setPage('game');
+    });
+
+    // 观战申请被拒绝（申请者端）
+    socket.on('spectate-rejected', ({ roomId: rejectedRoomId }) => {
+      setSpectateStatus(prev => ({
+        pendingRoomId: null,
+        rejectedRoomIds: new Set([...prev.rejectedRoomIds, rejectedRoomId]),
+      }));
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -205,6 +312,10 @@ export default function App() {
       socket.off('words-changed');
       socket.off('player-disconnect-countdown');
       socket.off('game-aborted');
+      socket.off('room-closed');
+      socket.off('spectate-request');
+      socket.off('spectate-approved');
+      socket.off('spectate-rejected');
       socket.disconnect();
     };
   }, [authed, playerId]);
@@ -269,9 +380,38 @@ export default function App() {
     setMyWord(null);
     setMyRole(null);
     setVoteResult(null);
+    setIsSpectator(false);
+    setSpectateRequests([]);
     setPage('home');
     socket.disconnect();
     socket.connect();
+  }, []);
+
+  const handleSpectateRequest = useCallback((rid) => {
+    const savedName = localStorage.getItem('wuc_player_name') || playerName;
+    const savedAvatar = localStorage.getItem('wuc_player_avatar') || playerAvatar;
+    setSpectateStatus(prev => ({ ...prev, pendingRoomId: rid }));
+    socket.emit('request-spectate', {
+      roomId: rid,
+      playerName: savedName,
+      playerId,
+      playerAvatar: savedAvatar,
+    }, (res) => {
+      if (res?.error) {
+        setSpectateStatus(prev => ({ ...prev, pendingRoomId: null }));
+        setError(res.error);
+      }
+    });
+  }, [playerId, playerName, playerAvatar]);
+
+  const handleApproveSpectate = useCallback((req) => {
+    socket.emit('approve-spectate', { requesterId: req.requesterId, roomId: req.roomId });
+    setSpectateRequests(prev => prev.filter(r => r.requesterId !== req.requesterId));
+  }, []);
+
+  const handleRejectSpectate = useCallback((req) => {
+    socket.emit('reject-spectate', { requesterId: req.requesterId, roomId: req.roomId });
+    setSpectateRequests(prev => prev.filter(r => r.requesterId !== req.requesterId));
   }, []);
 
   const handleGatePass = useCallback(() => {
@@ -309,6 +449,20 @@ export default function App() {
           </div>
         )}
 
+        {/* 房主观战审批通知（覆盖在任何页面上方） */}
+        {spectateRequests.length > 0 && (
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-40 w-full max-w-md px-4 space-y-2">
+            {spectateRequests.map((req) => (
+              <SpectateRequestCard
+                key={req.requesterId}
+                req={req}
+                onApprove={handleApproveSpectate}
+                onReject={handleRejectSpectate}
+              />
+            ))}
+          </div>
+        )}
+
         {page === 'home' && (
           <Home
             playerName={playerName}
@@ -316,6 +470,8 @@ export default function App() {
             connected={connected}
             onCreateRoom={createRoom}
             onJoinRoom={joinRoom}
+            onSpectate={handleSpectateRequest}
+            spectateStatus={spectateStatus}
           />
         )}
 
@@ -323,6 +479,7 @@ export default function App() {
           <Room
             roomState={roomState}
             playerId={playerId}
+            isSpectator={isSpectator}
             onLeave={leaveRoom}
           />
         )}
@@ -336,6 +493,7 @@ export default function App() {
             voteResult={voteResult}
             setVoteResult={setVoteResult}
             disconnectNotice={disconnectNotice}
+            isSpectator={isSpectator}
           />
         )}
       </div>
