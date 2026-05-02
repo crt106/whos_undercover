@@ -159,6 +159,10 @@ const GAME_DISCONNECT_TIMEOUT = 60;
 const guessTimers = new Map();
 // 卧底猜词时间（秒）
 const UNDERCOVER_GUESS_TIMEOUT = 30;
+// 结果阶段自动进入下一轮计时器：roomId → timeout
+const resultAutoNextTimers = new Map();
+// 结果阶段房主未操作时自动进入下一轮时间（秒）
+const RESULT_AUTO_NEXT_TIMEOUT = 15;
 // 房间非活跃超时时间（毫秒）：1小时
 const ROOM_INACTIVE_TIMEOUT = 60 * 60 * 1000;
 // 房间超时检查间隔（毫秒）：5分钟
@@ -263,6 +267,22 @@ gameIo.on('connection', (socket) => {
 
     room.setUndercoverCount(count);
     gameIo.to(room.id).emit('room-update', room.getPublicState());
+  });
+
+  socket.on('set-undercover-guess-mode', ({ mode }, callback) => {
+    const info = socketMap.get(socket.id);
+    if (!info) return;
+    const room = getRoom(info.roomId);
+    if (!room || info.playerId !== room.hostId) return;
+
+    const result = room.setUndercoverGuessMode(mode);
+    if (result.error) {
+      if (callback) callback({ error: result.error });
+      return;
+    }
+
+    gameIo.to(room.id).emit('room-update', room.getPublicState());
+    if (callback) callback({ success: true });
   });
 
   socket.on('start-game', (_, callback) => {
@@ -398,9 +418,14 @@ gameIo.on('connection', (socket) => {
         if (timeoutResult) {
           gameIo.to(room.id).emit('undercover-guess-result', timeoutResult);
           gameIo.to(room.id).emit('room-update', currentRoom.getPublicState());
+          if (currentRoom.phase === PHASE.RESULT) {
+            scheduleResultAutoNext(room.id);
+          }
         }
       }, UNDERCOVER_GUESS_TIMEOUT * 1000);
       guessTimers.set(room.id, guessTimer);
+    } else if (room.phase === PHASE.RESULT) {
+      scheduleResultAutoNext(room.id);
     }
 
     if (callback) callback({ success: true, result });
@@ -426,6 +451,9 @@ gameIo.on('connection', (socket) => {
 
     gameIo.to(info.roomId).emit('undercover-guess-result', result);
     gameIo.to(info.roomId).emit('room-update', room.getPublicState());
+    if (room.phase === PHASE.RESULT) {
+      scheduleResultAutoNext(room.id);
+    }
     if (callback) callback({ success: true, result });
   });
 
@@ -436,6 +464,7 @@ gameIo.on('connection', (socket) => {
     if (!room || info.playerId !== room.hostId) return;
 
     if (room.phase === PHASE.RESULT) {
+      clearResultAutoNextTimer(room.id);
       room.startSpeaking();
       gameIo.to(room.id).emit('room-update', room.getPublicState());
     }
@@ -452,6 +481,7 @@ gameIo.on('connection', (socket) => {
       clearTimeout(guessTimers.get(room.id));
       guessTimers.delete(room.id);
     }
+    clearResultAutoNextTimer(room.id);
 
     room.resetForNewGame();
     gameIo.to(room.id).emit('room-update', room.getPublicState());
@@ -485,6 +515,7 @@ gameIo.on('connection', (socket) => {
       clearTimeout(guessTimers.get(roomId));
       guessTimers.delete(roomId);
     }
+    clearResultAutoNextTimer(roomId);
     if (room._playingTimer) clearTimeout(room._playingTimer);
     pendingSpectatorRequests.delete(roomId);
 
@@ -666,6 +697,7 @@ function startGameDisconnectTimer(roomId, playerId) {
       clearTimeout(guessTimers.get(roomId));
       guessTimers.delete(roomId);
     }
+    clearResultAutoNextTimer(roomId);
 
     // 中止游戏，移除掉线玩家，回到等待
     currentRoom.abortGame(playerId);
@@ -677,6 +709,27 @@ function startGameDisconnectTimer(roomId, playerId) {
   }, GAME_DISCONNECT_TIMEOUT * 1000);
 
   gameDisconnectTimers.set(timerKey, timer);
+}
+
+function clearResultAutoNextTimer(roomId) {
+  if (!resultAutoNextTimers.has(roomId)) return;
+  clearTimeout(resultAutoNextTimers.get(roomId));
+  resultAutoNextTimers.delete(roomId);
+}
+
+function scheduleResultAutoNext(roomId) {
+  clearResultAutoNextTimer(roomId);
+
+  const timer = setTimeout(() => {
+    resultAutoNextTimers.delete(roomId);
+    const room = getRoom(roomId);
+    if (!room || room.phase !== PHASE.RESULT) return;
+
+    room.startSpeaking();
+    gameIo.to(roomId).emit('room-update', room.getPublicState());
+  }, RESULT_AUTO_NEXT_TIMEOUT * 1000);
+
+  resultAutoNextTimers.set(roomId, timer);
 }
 
 // 定期检查并关闭超时的非活跃房间
@@ -708,6 +761,7 @@ setInterval(() => {
         clearTimeout(guessTimers.get(roomId));
         guessTimers.delete(roomId);
       }
+      clearResultAutoNextTimer(roomId);
 
       // 直接遍历 socketMap 逐个通知（绕开 socket.io room 成员不一致的问题）
       for (const [sid, sInfo] of socketMap.entries()) {

@@ -9,6 +9,7 @@ export default function Room({ roomState, playerId, isSpectator, onLeave }) {
   // 房主不参与准备状态，只需其他玩家全部准备
   const nonHostPlayers = roomState.players.filter(p => p.id !== roomState.hostId);
   const allReady = roomState.players.length >= 4 && nonHostPlayers.every(p => p.ready);
+  const maxUndercoverCount = Math.max(1, Math.floor((roomState.players.length - 1) / 2));
 
   const copyRoomId = () => {
     navigator.clipboard.writeText(roomState.id).then(() => {
@@ -27,6 +28,10 @@ export default function Room({ roomState, playerId, isSpectator, onLeave }) {
 
   const setUndercoverCount = (count) => {
     socket.emit('set-undercover-count', { count });
+  };
+
+  const setUndercoverGuessMode = (mode) => {
+    socket.emit('set-undercover-guess-mode', { mode });
   };
 
   return (
@@ -102,21 +107,63 @@ export default function Room({ roomState, playerId, isSpectator, onLeave }) {
       {/* 房主设置 */}
       {isHost && (
         <div className="bg-violet-50 rounded-2xl p-4 space-y-3">
-          <p className="text-sm font-bold text-violet-700">卧底人数</p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-bold text-violet-700">卧底人数</p>
+            <p className="text-xs text-violet-400">
+              当前最多 {maxUndercoverCount} 人
+            </p>
+          </div>
           <div className="flex gap-2">
-            {[1, 2, 3].map(n => (
-              <button
-                key={n}
-                className={`flex-1 py-2 rounded-xl font-bold transition-all ${
-                  roomState.undercoverCount === n
-                    ? 'bg-violet-500 text-white shadow-md'
-                    : 'bg-white text-violet-500 border border-violet-200'
-                }`}
-                onClick={() => setUndercoverCount(n)}
-              >
-                {n}人
-              </button>
-            ))}
+            {[1, 2, 3].map(n => {
+              const disabled = n > maxUndercoverCount;
+              const active = roomState.undercoverCount === n && !disabled;
+
+              return (
+                <button
+                  key={n}
+                  className={`flex-1 py-2 rounded-xl font-bold border transition-all ${
+                    disabled
+                      ? 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-300'
+                      : active
+                        ? 'border-violet-500 bg-violet-500 text-white shadow-md active:scale-95'
+                        : 'border-violet-200 bg-white text-violet-500 active:scale-95'
+                  }`}
+                  onClick={() => setUndercoverCount(n)}
+                  disabled={disabled}
+                  title={disabled ? `当前 ${roomState.players.length} 人最多只能设置 ${maxUndercoverCount} 名卧底` : ''}
+                >
+                  {n}人
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="pt-3 border-t border-violet-100 space-y-2">
+            <p className="text-sm font-bold text-violet-700">猜词触发</p>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { value: 'every_undercover', label: '每次淘汰', hint: '任一卧底出局都猜' },
+                { value: 'final_undercover', label: '最后卧底', hint: '仅最后卧底出局猜' },
+              ].map(option => {
+                const active = (roomState.undercoverGuessMode || 'every_undercover') === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    className={`py-2 px-2 rounded-xl border font-bold transition-all active:scale-95 ${
+                      active
+                        ? 'bg-violet-500 text-white border-violet-500 shadow-md'
+                        : 'bg-white text-violet-500 border-violet-200'
+                    }`}
+                    onClick={() => setUndercoverGuessMode(option.value)}
+                  >
+                    <span className="block text-sm">{option.label}</span>
+                    <span className={`block text-[10px] font-medium mt-0.5 ${active ? 'text-violet-100' : 'text-violet-300'}`}>
+                      {option.hint}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

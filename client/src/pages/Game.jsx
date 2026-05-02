@@ -83,8 +83,8 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
     });
   };
 
-  // 换词仅在准备阶段
-  const canChangeWord = !roomState.wordChanged && roomState.phase === 'playing';
+  // 换词仅在准备阶段，每次投票通过后会清空票数，可再次发起。
+  const canChangeWord = roomState.phase === 'playing';
   const hasVotedChange = roomState.changeWordVoters?.includes(playerId);
 
   const voteChangeWord = () => {
@@ -96,7 +96,9 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
     speaking: `第 ${roomState.round} 轮 · 发言中`,
     voting: `第 ${roomState.round} 轮 · 投票中`,
     result: `第 ${roomState.round} 轮 · 投票结果`,
-    undercover_guess: '卧底最后机会 · 猜词中',
+    undercover_guess: roomState.undercoverGuessMode === 'final_undercover'
+      ? '卧底最后机会 · 猜词中'
+      : '卧底猜词机会 · 猜词中',
     game_over: '游戏结束',
   };
 
@@ -207,13 +209,16 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
             {phaseLabel[roomState.phase] || ''}
           </span>
           {roomState.phase === 'playing' && (
-            <Timer key={`playing-${roomState.wordChanged}`} seconds={30} />
+            <Timer key={`playing-${roomState.wordChangeCount || 0}`} seconds={30} />
           )}
           {roomState.phase === 'speaking' && (
             <Timer key={`speak-${roomState.currentSpeakerIndex}-${roomState.round}`} seconds={60} />
           )}
           {roomState.phase === 'voting' && !myVote && (
             <Timer key={`vote-${roomState.round}`} seconds={30} />
+          )}
+          {roomState.phase === 'result' && (
+            <Timer key={`result-${roomState.round}`} seconds={15} />
           )}
           {roomState.phase === 'undercover_guess' && (
             <Timer key={`guess-${roomState.guessingUndercoverId}`} seconds={30} />
@@ -365,11 +370,13 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
         />
       )}
 
-      {/* 卧底最后猜词 */}
+      {/* 卧底猜词 */}
       {roomState.phase === 'undercover_guess' && isGuessingUndercover && !isSpectator && (
         <div className="card !p-4 space-y-3 animate-bounce-in border-2 border-red-300">
-          <p className="text-sm font-bold text-red-700 text-center">🕵️ 你的最后一次机会！</p>
-          <p className="text-xs text-red-500 text-center">猜出平民的词语，卧底即可翻盘获胜！</p>
+          <p className="text-sm font-bold text-red-700 text-center">
+            🕵️ {roomState.undercoverGuessMode === 'final_undercover' ? '你的最后一次机会！' : '你的猜词机会！'}
+          </p>
+          <p className="text-xs text-red-500 text-center">猜出平民的词语，卧底即可获胜！</p>
           <div className="flex gap-2">
             <input
               type="text"
@@ -396,7 +403,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
           <p className="text-violet-600 text-sm">
             🕵️ <span className="font-bold">{guessingPlayer.name}</span> 正在尝试猜出平民词语...
           </p>
-          <p className="text-xs text-violet-400">猜对则卧底翻盘获胜！</p>
+          <p className="text-xs text-violet-400">猜对则卧底获胜！</p>
         </div>
       )}
 
@@ -425,12 +432,16 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
           {roomState.guessResult && (
             <div className="bg-violet-50 rounded-xl p-3 text-sm space-y-1">
               {roomState.guessResult.timeout ? (
-                <p className="text-violet-500">卧底未在限时内猜出词语，平民获胜</p>
+                <p className="text-violet-500">
+                  卧底未在限时内猜出词语
+                  {roomState.winner === 'civilian' ? '，平民获胜' : '，游戏继续'}
+                </p>
               ) : roomState.guessResult.correct ? (
-                <p className="text-green-600 font-bold">卧底猜对了「{roomState.civilianWord}」，翻盘成功！</p>
+                <p className="text-green-600 font-bold">卧底猜对了「{roomState.civilianWord}」，获胜！</p>
               ) : (
                 <p className="text-red-500">
-                  卧底猜了「{roomState.guessResult.guess}」，答案是「{roomState.civilianWord}」，猜错了
+                  卧底猜了「{roomState.guessResult.guess}」，猜错了
+                  {roomState.winner === 'civilian' ? `，答案是「${roomState.civilianWord}」` : '，游戏继续'}
                 </p>
               )}
             </div>

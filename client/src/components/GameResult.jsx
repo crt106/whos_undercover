@@ -1,6 +1,7 @@
 export default function GameResult({ voteResult, roomState, isHost, onNextRound, onPlayAgain, onClose }) {
   const isGameOver = roomState.phase === 'game_over';
   const isUndercoverGuess = roomState.phase === 'undercover_guess';
+  const isFinalGuessMode = roomState.undercoverGuessMode === 'final_undercover';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -63,10 +64,46 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
         )}
 
         {/* 卧底进入猜词阶段提示 */}
-        {(isUndercoverGuess || voteResult.gameOver?.guessRequired) && (
+        {(isUndercoverGuess || (voteResult.gameOver?.guessRequired && !roomState.guessResult)) && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center space-y-1">
-            <p className="text-sm font-bold text-red-700">🕵️ 卧底的最后机会！</p>
-            <p className="text-xs text-red-500">卧底被淘汰，但还有 30 秒猜出平民词语翻盘！</p>
+            <p className="text-sm font-bold text-red-700">
+              🕵️ {isFinalGuessMode ? '卧底的最后机会！' : '卧底的猜词机会！'}
+            </p>
+            <p className="text-xs text-red-500">卧底被淘汰，还有 30 秒猜出平民词语获胜！</p>
+          </div>
+        )}
+
+        {isGameOver && roomState.guessResult && (
+          <div className="text-center space-y-2 pt-2 border-t border-violet-100">
+            <div className="text-5xl">
+              {roomState.winner === 'civilian' ? '🎉' : '🕵️'}
+            </div>
+            <p className="text-2xl font-black text-violet-700">
+              {roomState.winner === 'civilian' ? '平民胜利！' : '卧底胜利！'}
+            </p>
+            <div className="bg-violet-50 rounded-xl p-3 text-sm space-y-1">
+              {roomState.guessResult.timeout ? (
+                <p className="text-violet-500">卧底未在限时内猜出词语</p>
+              ) : roomState.guessResult.correct ? (
+                <p className="text-green-600 font-bold">卧底猜对了「{roomState.civilianWord}」</p>
+              ) : (
+                <p className="text-red-500">卧底猜了「{roomState.guessResult.guess}」，猜错了</p>
+              )}
+            </div>
+            <div className="text-sm text-violet-500 space-y-1">
+              <p>平民词：<span className="font-bold">{roomState.civilianWord}</span></p>
+              <p>卧底词：<span className="font-bold text-red-500">{roomState.undercoverWord}</span></p>
+            </div>
+          </div>
+        )}
+
+        {/* 非最后卧底猜错后，游戏继续 */}
+        {!isGameOver && !isUndercoverGuess && roomState.guessResult && !roomState.guessResult.correct && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center space-y-1">
+            <p className="text-sm font-bold text-amber-700">
+              {roomState.guessResult.timeout ? '卧底猜词超时' : '卧底猜词失败'}
+            </p>
+            <p className="text-xs text-amber-600">仍有卧底存活，游戏继续。</p>
           </div>
         )}
 
@@ -81,6 +118,9 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
             <button className="btn-primary" onClick={onNextRound}>
               下一轮
             </button>
+          )}
+          {!isGameOver && !isUndercoverGuess && (
+            <p className="text-center text-xs text-violet-400">15 秒后自动进入下一轮</p>
           )}
           <button className="btn-secondary !py-2.5 !text-base" onClick={onClose}>
             {isUndercoverGuess ? '关闭并观战' : '关闭'}

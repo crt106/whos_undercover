@@ -10,6 +10,11 @@ const PHASE = {
   GAME_OVER: 'game_over',
 };
 
+const UNDERCOVER_GUESS_MODE = {
+  EVERY: 'every_undercover',
+  FINAL: 'final_undercover',
+};
+
 // Fisher-Yates 洗牌算法
 function shuffleArray(arr) {
   const shuffled = [...arr];
@@ -27,6 +32,7 @@ class Room {
     this.players = []; // { id, name, avatar, ready, alive, role, word, vote, speech }
     this.phase = PHASE.WAITING;
     this.undercoverCount = 1;
+    this.undercoverGuessMode = UNDERCOVER_GUESS_MODE.EVERY;
     this.round = 0;
     this.currentSpeakerIndex = -1;
     this.civilianWord = '';
@@ -35,8 +41,9 @@ class Room {
     this.votingTimer = null;
     this.voteResult = null;
     this.winner = null;
-    this.changeWordVotes = new Set(); // 投票换词的玩家ID集合
-    this.wordChanged = false;         // 本局是否已换过词
+    this.changeWordVotes = new Set(); // 当前一轮投票换词的玩家ID集合
+    this.wordChanged = false;         // 本局是否发生过换词
+    this.wordChangeCount = 0;         // 本局换词次数，用于客户端重置准备倒计时
     this.lastUndercoverIds = new Set(); // 上一局卧底的玩家ID
     this.speakingOrder = [];           // 当前局随机发言顺序（玩家ID数组）
     this.speakingOrderIndex = 0;       // 当前发言者在 speakingOrder 中的位置
@@ -85,6 +92,8 @@ class Room {
       this.hostId = this.players[0].id;
     }
 
+    this.normalizeUndercoverCount();
+
     return this.players.length === 0;
   }
 
@@ -119,18 +128,33 @@ class Room {
     return this.players.length >= 4 && this.players.every(p => p.id === this.hostId || p.ready);
   }
 
+  getMaxUndercoverCount() {
+    return Math.max(1, Math.floor((this.players.length - 1) / 2));
+  }
+
+  normalizeUndercoverCount() {
+    this.undercoverCount = Math.min(this.undercoverCount, this.getMaxUndercoverCount());
+  }
+
   setUndercoverCount(count) {
-    const maxUndercover = Math.floor((this.players.length - 1) / 2);
-    this.undercoverCount = Math.min(Math.max(1, count), maxUndercover || 1);
+    this.undercoverCount = Math.min(Math.max(1, count), this.getMaxUndercoverCount());
+  }
+
+  setUndercoverGuessMode(mode) {
+    if (!Object.values(UNDERCOVER_GUESS_MODE).includes(mode)) {
+      return { error: '无效的猜词模式' };
+    }
+    if (this.phase !== PHASE.WAITING) {
+      return { error: '仅等待阶段可以修改猜词模式' };
+    }
+    this.undercoverGuessMode = mode;
+    return { success: true };
   }
 
   startGame() {
     if (this.players.length < 4) return { error: '至少需要4名玩家' };
 
-    const maxUndercover = Math.floor((this.players.length - 1) / 2);
-    if (this.undercoverCount > maxUndercover) {
-      this.undercoverCount = maxUndercover;
-    }
+    this.normalizeUndercoverCount();
 
     const { civilianWord, undercoverWord } = getRandomWordPair();
     this.civilianWord = civilianWord;
@@ -163,8 +187,11 @@ class Room {
     this.round = 0;
     this.winner = null;
     this.voteResult = null;
+    this.guessResult = null;
+    this.guessingUndercoverId = null;
     this.changeWordVotes = new Set();
     this.wordChanged = false;
+    this.wordChangeCount = 0;
     this.speechHistory = [];
     this.inactiveStartTime = null; // 游戏进行中，不计入非活跃时间
 
@@ -173,7 +200,6 @@ class Room {
 
   // 投票换词，返回 { voted, passed, total, needed }
   voteChangeWord(playerId) {
-    if (this.wordChanged) return { error: '本局已换过词' };
     if (this.phase !== PHASE.PLAYING) {
       return { error: '仅准备阶段可以换词' };
     }
@@ -206,6 +232,7 @@ class Room {
 
     this.changeWordVotes = new Set();
     this.wordChanged = true;
+    this.wordChangeCount++;
     this.speechHistory = [];
     // 回到准备阶段让玩家看新词
     this.phase = PHASE.PLAYING;
@@ -226,6 +253,8 @@ class Room {
 
     this.round++;
     this.phase = PHASE.SPEAKING;
+    this.guessResult = null;
+    this.guessingUndercoverId = null;
     this.players.forEach(p => {
       p.speech = null;
       p.vote = null;
@@ -339,14 +368,23 @@ class Room {
     const aliveUndercover = this.players.filter(p => p.alive && p.role === 'undercover').length;
     const aliveCivilian = this.players.filter(p => p.alive && p.role === 'civilian').length;
 
+    const eliminatedUndercoverNeedsGuess = eliminatedPlayer?.role === 'undercover'
+      && (
+        this.undercoverGuessMode === UNDERCOVER_GUESS_MODE.EVERY
+        || (this.undercoverGuessMode === UNDERCOVER_GUESS_MODE.FINAL && aliveUndercover === 0)
+      );
+
+    if (eliminatedUndercoverNeedsGuess) {
+      this.phase = PHASE.UNDERCOVER_GUESS;
+      this.guessingUndercoverId = eliminatedPlayer.id;
+      return {
+        guessRequired: true,
+        guessingUndercoverId: eliminatedPlayer.id,
+        guessMode: this.undercoverGuessMode,
+      };
+    }
+
     if (aliveUndercover === 0) {
-      // 所有卧底都被淘汰——如果本轮淘汰的是最后一个卧底，给其猜词机会
-      if (eliminatedPlayer && eliminatedPlayer.role === 'undercover') {
-        this.phase = PHASE.UNDERCOVER_GUESS;
-        this.guessingUndercoverId = eliminatedPlayer.id;
-        return { guessRequired: true, guessingUndercoverId: eliminatedPlayer.id };
-      }
-      // 兜底：直接平民胜
       this.winner = 'civilian';
       this.phase = PHASE.GAME_OVER;
       this.inactiveStartTime = Date.now();
@@ -373,16 +411,22 @@ class Room {
     const correct = normalizedGuess === normalizedAnswer;
 
     this.guessResult = { playerId, guess: normalizedGuess, correct, timeout: false };
-    this.winner = correct ? 'undercover' : 'civilian';
-    this.phase = PHASE.GAME_OVER;
-    this.inactiveStartTime = Date.now();
+
+    if (correct) {
+      this.winner = 'undercover';
+      this.phase = PHASE.GAME_OVER;
+      this.inactiveStartTime = Date.now();
+    } else {
+      this.finishFailedUndercoverGuess();
+    }
 
     return {
       correct,
       guess: normalizedGuess,
       winner: this.winner,
-      civilianWord: this.civilianWord,
-      undercoverWord: this.undercoverWord,
+      phase: this.phase,
+      civilianWord: this.phase === PHASE.GAME_OVER ? this.civilianWord : null,
+      undercoverWord: this.phase === PHASE.GAME_OVER ? this.undercoverWord : null,
     };
   }
 
@@ -391,17 +435,30 @@ class Room {
     if (this.phase !== PHASE.UNDERCOVER_GUESS) return null;
 
     this.guessResult = { playerId: this.guessingUndercoverId, guess: null, correct: false, timeout: true };
-    this.winner = 'civilian';
-    this.phase = PHASE.GAME_OVER;
-    this.inactiveStartTime = Date.now();
+    this.finishFailedUndercoverGuess();
 
     return {
       correct: false,
       timeout: true,
-      winner: 'civilian',
-      civilianWord: this.civilianWord,
-      undercoverWord: this.undercoverWord,
+      winner: this.winner,
+      phase: this.phase,
+      civilianWord: this.phase === PHASE.GAME_OVER ? this.civilianWord : null,
+      undercoverWord: this.phase === PHASE.GAME_OVER ? this.undercoverWord : null,
     };
+  }
+
+  finishFailedUndercoverGuess() {
+    const aliveUndercover = this.players.filter(p => p.alive && p.role === 'undercover').length;
+
+    if (aliveUndercover === 0) {
+      this.winner = 'civilian';
+      this.phase = PHASE.GAME_OVER;
+      this.inactiveStartTime = Date.now();
+    } else {
+      this.winner = null;
+      this.phase = PHASE.RESULT;
+      this.guessingUndercoverId = null;
+    }
   }
 
   getPublicState() {
@@ -411,6 +468,7 @@ class Room {
       phase: this.phase,
       round: this.round,
       undercoverCount: this.undercoverCount,
+      undercoverGuessMode: this.undercoverGuessMode,
       currentSpeakerIndex: this.currentSpeakerIndex,
       currentSpeakerId: this.currentSpeakerIndex >= 0 ? this.players[this.currentSpeakerIndex]?.id : null,
       voteResult: this.voteResult,
@@ -419,6 +477,7 @@ class Room {
       changeWordNeeded: Math.floor(this.players.length / 2) + 1,
       changeWordVoters: [...this.changeWordVotes],
       wordChanged: this.wordChanged,
+      wordChangeCount: this.wordChangeCount,
       // 卧底猜词相关
       guessingUndercoverId: this.guessingUndercoverId,
       guessResult: this.guessResult,
@@ -471,6 +530,7 @@ class Room {
     this.winner = null;
     this.changeWordVotes = new Set();
     this.wordChanged = false;
+    this.wordChangeCount = 0;
     this.speakingOrder = [];
     this.speakingOrderIndex = 0;
     this.lastUndercoverIds = new Set();
@@ -498,6 +558,7 @@ class Room {
     this.winner = null;
     this.changeWordVotes = new Set();
     this.wordChanged = false;
+    this.wordChangeCount = 0;
     this.speakingOrder = [];
     this.speakingOrderIndex = 0;
     this.guessingUndercoverId = null;
