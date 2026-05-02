@@ -22,6 +22,7 @@ export default function PlayerCard({
   const alive = player.alive !== false;
   const online = player.online !== false;
   const avatar = player.avatar || getAvatar(player.id);
+  const showEliminatedRoleBadge = !alive && player.role;
 
   return (
     <div
@@ -63,8 +64,20 @@ export default function PlayerCard({
           )}
         </div>
         {/* 房主标记 */}
-        {isHost && (
+        {isHost && !showEliminatedRoleBadge && (
           <span className="absolute -top-1 -right-1 text-xs">👑</span>
+        )}
+        {showEliminatedRoleBadge && (
+          <span
+            className={`absolute -top-1.5 -right-2 min-w-6 h-5 px-1 rounded-full border-2 border-white shadow-md flex items-center justify-center text-[10px] leading-none font-black ${
+              player.role === 'undercover'
+                ? 'bg-red-500 text-white'
+                : 'bg-blue-500 text-white'
+            }`}
+            title={player.role === 'undercover' ? '卧底' : '平民'}
+          >
+            {player.role === 'undercover' ? '卧' : '平'}
+          </span>
         )}
       </div>
       <span className={`text-xs font-medium truncate max-w-[60px] ${

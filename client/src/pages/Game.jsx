@@ -18,6 +18,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
   const me = roomState.players.find(p => p.id === playerId);
   const currentSpeaker = roomState.players[roomState.currentSpeakerIndex];
   const isMyTurn = currentSpeaker?.id === playerId;
+  const lastVibrateKeyRef = useRef(null);
 
   // 当收到投票结果时显示
   useEffect(() => {
@@ -34,6 +35,31 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       setMyVote(null);
     }
   }, [roomState.phase, roomState.round]);
+
+  useEffect(() => {
+    const isMySpeakingTurn = roomState.phase === 'speaking' && isMyTurn && !isSpectator;
+    if (!isMySpeakingTurn) return;
+
+    const vibrateKey = `${roomState.currentSpeechKey || roomState.round}:${roomState.currentSpeakerId || currentSpeaker?.id}`;
+    if (lastVibrateKeyRef.current === vibrateKey) return;
+    lastVibrateKeyRef.current = vibrateKey;
+
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(80);
+      }
+    } catch {
+      // Vibration is best-effort only; unsupported devices should continue normally.
+    }
+  }, [
+    roomState.phase,
+    roomState.currentSpeechKey,
+    roomState.round,
+    roomState.currentSpeakerId,
+    currentSpeaker?.id,
+    isMyTurn,
+    isSpectator,
+  ]);
 
   const submitSpeech = (speech) => {
     socket.emit('submit-speech', { speech }, (res) => {
@@ -91,10 +117,17 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
     socket.emit('vote-change-word');
   };
 
+  const isBattle = roomState.voteScope === 'battle';
+  const battleLabel = roomState.currentSpeechLabel || `平票battle-${roomState.battleRound || 1}`;
+  const battleNames = roomState.players
+    .filter(p => roomState.battleCandidates?.includes(p.id))
+    .map(p => p.name)
+    .join('、');
+
   const phaseLabel = {
     playing: '准备阶段',
-    speaking: `第 ${roomState.round} 轮 · 发言中`,
-    voting: `第 ${roomState.round} 轮 · 投票中`,
+    speaking: isBattle ? `${battleLabel} · 发言中` : `第 ${roomState.round} 轮 · 发言中`,
+    voting: isBattle ? `${battleLabel} · 再投票` : `第 ${roomState.round} 轮 · 投票中`,
     result: `第 ${roomState.round} 轮 · 投票结果`,
     undercover_guess: roomState.undercoverGuessMode === 'final_undercover'
       ? '卧底最后机会 · 猜词中'
@@ -104,6 +137,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
 
   const isGuessingUndercover = playerId === roomState.guessingUndercoverId;
   const guessingPlayer = roomState.players.find(p => p.id === roomState.guessingUndercoverId);
+  const showAliveRoleCounts = ['playing', 'speaking', 'voting', 'result', 'undercover_guess', 'game_over'].includes(roomState.phase);
 
   // 检查是否有离线玩家（活着的）
   const offlinePlayers = roomState.players.filter(p => p.alive && p.online === false);
@@ -194,8 +228,9 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
                 ? 'bg-red-50 border border-red-300'
                 : 'card !p-4'
         }`}>
-        <div className="flex items-center justify-between">
-          <span className={`text-sm font-bold ${roomState.phase === 'playing'
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <span className={`block text-sm font-bold truncate ${roomState.phase === 'playing'
               ? 'text-amber-700'
               : roomState.phase === 'speaking'
                 ? 'text-blue-700'
@@ -205,17 +240,28 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
                     ? 'text-red-700'
                     : 'text-violet-700'
             }`}>
-            {roomState.phase === 'playing' ? '⏳ ' : roomState.phase === 'speaking' ? '💬 ' : roomState.phase === 'voting' ? '🗳️ ' : roomState.phase === 'undercover_guess' ? '🕵️ ' : ''}
-            {phaseLabel[roomState.phase] || ''}
-          </span>
+              {roomState.phase === 'playing' ? '⏳ ' : roomState.phase === 'speaking' ? '💬 ' : roomState.phase === 'voting' ? '🗳️ ' : roomState.phase === 'undercover_guess' ? '🕵️ ' : ''}
+              {phaseLabel[roomState.phase] || ''}
+            </span>
+            {showAliveRoleCounts && (
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-700">
+                  平民 {roomState.aliveCivilianCount ?? 0}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700">
+                  卧底 {roomState.aliveUndercoverCount ?? 0}
+                </span>
+              </div>
+            )}
+          </div>
           {roomState.phase === 'playing' && (
             <Timer key={`playing-${roomState.wordChangeCount || 0}`} seconds={30} />
           )}
           {roomState.phase === 'speaking' && (
-            <Timer key={`speak-${roomState.currentSpeakerIndex}-${roomState.round}`} seconds={60} />
+            <Timer key={`speak-${roomState.currentSpeakerIndex}-${roomState.currentSpeechKey || roomState.round}`} seconds={60} />
           )}
           {roomState.phase === 'voting' && !myVote && (
-            <Timer key={`vote-${roomState.round}`} seconds={30} />
+            <Timer key={`vote-${roomState.currentSpeechKey || roomState.round}`} seconds={30} />
           )}
           {roomState.phase === 'result' && (
             <Timer key={`result-${roomState.round}`} seconds={15} />
@@ -282,7 +328,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
               player={player}
               isMe={player.id === playerId}
               isSpeaking={roomState.phase === 'speaking' && roomState.currentSpeakerIndex === idx}
-              isVotable={roomState.phase === 'voting' && player.alive && player.id !== playerId && !myVote && me?.alive}
+              isVotable={roomState.phase === 'voting' && player.alive && player.id !== playerId && !myVote && me?.alive && (!isBattle || roomState.battleCandidates?.includes(player.id))}
               isVoted={myVote === player.id}
               onVote={() => submitVote(player.id)}
               showRole={roomState.phase === 'game_over'}
@@ -296,6 +342,8 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
         <SpeechHistoryTabs
           speechHistory={roomState.speechHistory || []}
           currentRound={roomState.round}
+          currentKey={roomState.currentSpeechKey}
+          currentLabel={roomState.currentSpeechLabel}
           currentSpeeches={roomState.players
             .filter(p => p.speech)
             .map(p => ({ id: p.id, name: p.name, speech: p.speech }))}
@@ -307,6 +355,12 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       {/* 发言输入区域（speaking 阶段，存活玩家均可见） */}
       {roomState.phase === 'speaking' && me?.alive && !isSpectator && (
         <div className={`card !p-4 space-y-3 ${isMyTurn ? 'animate-bounce-in' : 'animate-fade-in'}`}>
+          {isBattle && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-center">
+              <p className="text-xs font-bold text-amber-700">{battleLabel}</p>
+              <p className="text-xs text-amber-600">平票候选人：{battleNames}</p>
+            </div>
+          )}
           {isMyTurn ? (
             <p className="text-sm font-bold text-violet-700 text-center">轮到你发言了！</p>
           ) : currentSpeaker ? (
@@ -345,6 +399,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       {/* 观战者发言进度提示 */}
       {roomState.phase === 'speaking' && isSpectator && currentSpeaker && (
         <div className="card !p-4 text-center">
+          {isBattle && <p className="text-xs font-bold text-amber-600 mb-1">{battleLabel}</p>}
           <p className="text-violet-500 text-sm">
             <span className="font-bold">{currentSpeaker.name}</span> 正在发言...
           </p>
@@ -354,6 +409,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       {/* 等待发言（已死亡的玩家看到的提示） */}
       {roomState.phase === 'speaking' && !me?.alive && !isSpectator && currentSpeaker && (
         <div className="card !p-4 text-center">
+          {isBattle && <p className="text-xs font-bold text-amber-600 mb-1">{battleLabel}</p>}
           <p className="text-violet-500">
             等待 <span className="font-bold">{currentSpeaker.name}</span> 发言...
           </p>
@@ -367,6 +423,8 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
           playerId={playerId}
           myVote={myVote}
           onVote={submitVote}
+          targetIds={isBattle ? roomState.battleCandidates : null}
+          title={isBattle ? `平票再投票：${battleNames}` : '选择你认为的卧底'}
         />
       )}
 
@@ -464,37 +522,48 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
 }
 
 // 多轮发言历史 Tab 组件
-function SpeechHistoryTabs({ speechHistory, currentRound, currentSpeeches, playerId, phase }) {
+function SpeechHistoryTabs({ speechHistory, currentRound, currentKey, currentLabel, currentSpeeches, playerId, phase }) {
   const showCurrentTab = ['speaking', 'voting', 'result', 'undercover_guess', 'game_over'].includes(phase);
+  const activeCurrentKey = currentKey || `round-${currentRound}`;
 
   // 合并历史轮次 + 当前轮次
   const allRounds = [
-    ...speechHistory,
-    ...(showCurrentTab ? [{ round: currentRound, speeches: currentSpeeches, isCurrent: true }] : []),
+    ...speechHistory.map(entry => ({
+      ...entry,
+      key: entry.key || `round-${entry.round}`,
+      label: entry.label || `第${entry.round}轮`,
+    })),
+    ...(showCurrentTab ? [{
+      key: activeCurrentKey,
+      label: currentLabel || `第${currentRound}轮`,
+      round: currentRound,
+      speeches: currentSpeeches,
+      isCurrent: true,
+    }] : []),
   ];
 
-  const [activeTab, setActiveTab] = useState(() => currentRound);
+  const [activeTab, setActiveTab] = useState(() => activeCurrentKey);
   const tabsContainerRef = useRef(null);
   const tabRefs = useRef({});
   const prevSpeechCountRef = useRef(currentSpeeches.length);
-  const prevRoundRef = useRef(currentRound);
+  const prevCurrentKeyRef = useRef(activeCurrentKey);
 
-  // 轮次切换时跳回当前轮
+  // 发言 Tab 切换时跳回当前轮
   useEffect(() => {
-    if (currentRound !== prevRoundRef.current) {
-      setActiveTab(currentRound);
-      prevRoundRef.current = currentRound;
+    if (activeCurrentKey !== prevCurrentKeyRef.current) {
+      setActiveTab(activeCurrentKey);
+      prevCurrentKeyRef.current = activeCurrentKey;
     }
-  }, [currentRound]);
+  }, [activeCurrentKey]);
 
-  // 当前轮新增发言时，若用户在查看历史轮，自动跳回当前轮
+  // 当前 Tab 新增发言时，若用户在查看历史 Tab，自动跳回当前 Tab
   useEffect(() => {
     const count = currentSpeeches.length;
-    if (count > prevSpeechCountRef.current && activeTab !== currentRound && currentRound > 0) {
-      setActiveTab(currentRound);
+    if (count > prevSpeechCountRef.current && activeTab !== activeCurrentKey && currentRound > 0) {
+      setActiveTab(activeCurrentKey);
     }
     prevSpeechCountRef.current = count;
-  }, [currentSpeeches.length, currentRound, activeTab]);
+  }, [currentSpeeches.length, currentRound, activeTab, activeCurrentKey]);
 
   // activeTab 变化时，滚动 Tab 到可见区域中央
   useEffect(() => {
@@ -506,8 +575,8 @@ function SpeechHistoryTabs({ speechHistory, currentRound, currentSpeeches, playe
 
   if (allRounds.length === 0) return null;
 
-  const activeRoundData = allRounds.find(r => r.round === activeTab);
-  const isViewingHistory = activeTab !== currentRound && showCurrentTab;
+  const activeRoundData = allRounds.find(r => r.key === activeTab);
+  const isViewingHistory = activeTab !== activeCurrentKey && showCurrentTab;
 
   return (
     <div className="card !p-0 overflow-hidden">
@@ -517,19 +586,19 @@ function SpeechHistoryTabs({ speechHistory, currentRound, currentSpeeches, playe
         className="flex overflow-x-auto border-b border-violet-100"
         style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}
       >
-        {allRounds.map(({ round, isCurrent }) => (
+        {allRounds.map(({ key, label, round, isCurrent }) => (
           <button
-            key={round}
-            ref={el => { tabRefs.current[round] = el; }}
-            onClick={() => setActiveTab(round)}
-            className={`flex-shrink-0 px-4 py-2.5 text-xs font-bold transition-colors border-b-2 ${activeTab === round
+            key={key}
+            ref={el => { tabRefs.current[key] = el; }}
+            onClick={() => setActiveTab(key)}
+            className={`flex-shrink-0 px-4 py-2.5 text-xs font-bold transition-colors border-b-2 ${activeTab === key
                 ? 'text-violet-700 border-violet-500 bg-violet-50'
                 : 'text-violet-400 border-transparent hover:text-violet-600'
               }`}
           >
-            第{round}轮
+            {label || `第${round}轮`}
             {isCurrent && (
-              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[9px] leading-none align-middle ${activeTab === round
+              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[9px] leading-none align-middle ${activeTab === key
                   ? 'bg-violet-500 text-white'
                   : 'bg-violet-100 text-violet-500'
                 }`}>
@@ -545,10 +614,10 @@ function SpeechHistoryTabs({ speechHistory, currentRound, currentSpeeches, playe
         <div className="flex items-center justify-between px-4 py-1.5 bg-amber-50 border-b border-amber-100">
           <span className="text-xs text-amber-600">正在查看历史发言</span>
           <button
-            onClick={() => setActiveTab(currentRound)}
+            onClick={() => setActiveTab(activeCurrentKey)}
             className="text-xs font-bold text-violet-600 active:opacity-70"
           >
-            回到第{currentRound}轮 →
+            回到{currentLabel || `第${currentRound}轮`} →
           </button>
         </div>
       )}
@@ -570,7 +639,7 @@ function SpeechHistoryTabs({ speechHistory, currentRound, currentSpeeches, playe
           ))
         ) : (
           <p className="text-xs text-violet-300 text-center py-2">
-            {phase === 'speaking' && activeTab === currentRound ? '等待发言中...' : '暂无发言'}
+            {phase === 'speaking' && activeTab === activeCurrentKey ? '等待发言中...' : '暂无发言'}
           </p>
         )}
       </div>

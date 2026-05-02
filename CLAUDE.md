@@ -73,6 +73,7 @@ Testing:
 - `pnpm test` runs Node's built-in `node:test` suite in `test/*.test.js`.
 - Tests instantiate `Room` from `server/game.js` directly. They do not start Express/Socket.IO and do not trigger `sendWebhook`.
 - The core suite covers one 4-player/1-undercover game and one 10-player/3-undercover game through word changes, speeches, votes, undercover guesses, and game-over paths.
+- It also covers repeated tie battle rounds and verifies battle speech history labels.
 
 ## Environment And Config
 
@@ -113,7 +114,7 @@ Room constraints and rules:
 - Undercover count is clamped to `1..floor((players - 1) / 2)`.
 - Host is the first player and is auto-ready.
 - If host leaves in waiting, host transfers to the first remaining player.
-- Tied votes eliminate nobody.
+- Tied votes do not enter `result`. They start an extra battle speaking round for the tied candidates only, labelled `平票battle-1`, `平票battle-2`, etc. All alive players then vote again, but targets are limited to the tied candidates. Repeat until one player has the highest vote count and is eliminated.
 - Game over if all undercovers are gone, or alive undercover count is greater than or equal to alive civilian count.
 - `undercoverGuessMode` is room-level waiting-stage config. Default is `every_undercover`; `final_undercover` preserves the older "only final undercover guesses" behavior.
 - In `every_undercover` mode, any eliminated undercover gets the `undercover_guess` chance. Correct guess makes undercovers win immediately. Failed guess continues the game if other undercovers remain, otherwise civilians win.

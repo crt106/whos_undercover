@@ -2,6 +2,10 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
   const isGameOver = roomState.phase === 'game_over';
   const isUndercoverGuess = roomState.phase === 'undercover_guess';
   const isFinalGuessMode = roomState.undercoverGuessMode === 'final_undercover';
+  const isTieBattle = voteResult.tieBattle || voteResult.voteResult?.tieBattle;
+  const tiedPlayerNames = voteResult.voteResult?.tiedPlayers?.map(p => p.name).join('、') || '';
+  const isGuessingUndercover = Boolean(roomState.guessingUndercoverId)
+    && voteResult.voteResult?.eliminated?.id === roomState.guessingUndercoverId;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -12,7 +16,12 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
             {voteResult.voteResult.tie ? (
               <>
                 <div className="text-4xl">🤔</div>
-                <p className="text-lg font-bold text-violet-700">平票！无人淘汰</p>
+                <p className="text-lg font-bold text-violet-700">平票！进入平票battle</p>
+                {tiedPlayerNames && (
+                  <p className="text-sm text-amber-600">
+                    候选人：<span className="font-bold">{tiedPlayerNames}</span>
+                  </p>
+                )}
               </>
             ) : voteResult.voteResult.eliminated ? (
               <>
@@ -114,16 +123,18 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
               再来一局
             </button>
           )}
-          {!isGameOver && !isUndercoverGuess && isHost && (
+          {!isTieBattle && !isGameOver && !isUndercoverGuess && isHost && (
             <button className="btn-primary" onClick={onNextRound}>
               下一轮
             </button>
           )}
-          {!isGameOver && !isUndercoverGuess && (
+          {isTieBattle ? (
+            <p className="text-center text-xs text-amber-600">关闭后继续平票battle发言</p>
+          ) : !isGameOver && !isUndercoverGuess && (
             <p className="text-center text-xs text-violet-400">15 秒后自动进入下一轮</p>
           )}
           <button className="btn-secondary !py-2.5 !text-base" onClick={onClose}>
-            {isUndercoverGuess ? '关闭并观战' : '关闭'}
+            {isUndercoverGuess && !isGuessingUndercover ? '关闭并观战' : '关闭'}
           </button>
         </div>
       </div>

@@ -1,5 +1,6 @@
-export default function VotePanel({ players, playerId, myVote, onVote }) {
-  const votable = players.filter(p => p.alive && p.id !== playerId);
+export default function VotePanel({ players, playerId, myVote, onVote, targetIds = null, title = '选择你认为的卧底' }) {
+  const targetSet = targetIds ? new Set(targetIds) : null;
+  const votable = players.filter(p => p.alive && p.id !== playerId && (!targetSet || targetSet.has(p.id)));
 
   if (myVote) {
     const target = players.find(p => p.id === myVote);
@@ -15,7 +16,7 @@ export default function VotePanel({ players, playerId, myVote, onVote }) {
 
   return (
     <div className="card !p-4 space-y-3 animate-bounce-in">
-      <p className="text-sm font-bold text-violet-700 text-center">选择你认为的卧底</p>
+      <p className="text-sm font-bold text-violet-700 text-center">{title}</p>
       <div className="grid grid-cols-2 gap-2">
         {votable.map(player => (
           <button

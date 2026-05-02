@@ -47,6 +47,11 @@ class Room {
     this.lastUndercoverIds = new Set(); // 上一局卧底的玩家ID
     this.speakingOrder = [];           // 当前局随机发言顺序（玩家ID数组）
     this.speakingOrderIndex = 0;       // 当前发言者在 speakingOrder 中的位置
+    this.battleRound = 0;              // 当前大轮内第几次平票 battle
+    this.battleCandidates = [];        // 当前平票 battle 候选玩家ID
+    this.voteScope = 'all';            // 'all' 或 'battle'
+    this.currentSpeechKey = null;      // 当前发言 Tab 的稳定 key
+    this.currentSpeechLabel = null;    // 当前发言 Tab 展示名
     this.guessingUndercoverId = null;  // 正在猜词的卧底ID
     this.guessResult = null;           // 猜词结果 { playerId, guess, correct, timeout }
     this.speechHistory = [];           // 历史发言记录 [{ round, speeches: [{id, name, speech}] }]
@@ -192,6 +197,11 @@ class Room {
     this.changeWordVotes = new Set();
     this.wordChanged = false;
     this.wordChangeCount = 0;
+    this.battleRound = 0;
+    this.battleCandidates = [];
+    this.voteScope = 'all';
+    this.currentSpeechKey = null;
+    this.currentSpeechLabel = null;
     this.speechHistory = [];
     this.inactiveStartTime = null; // 游戏进行中，不计入非活跃时间
 
@@ -238,21 +248,23 @@ class Room {
     this.phase = PHASE.PLAYING;
     this.round = 0;
     this.currentSpeakerIndex = -1;
+    this.battleRound = 0;
+    this.battleCandidates = [];
+    this.voteScope = 'all';
+    this.currentSpeechKey = null;
+    this.currentSpeechLabel = null;
   }
 
   startSpeaking() {
-    // 将上一轮发言存入历史（首轮前 round=0，无需存储）
-    if (this.round > 0) {
-      const speeches = this.players
-        .filter(p => p.speech !== null)
-        .map(p => ({ id: p.id, name: p.name, speech: p.speech }));
-      if (speeches.length > 0) {
-        this.speechHistory.push({ round: this.round, speeches });
-      }
-    }
+    this.archiveCurrentSpeeches();
 
     this.round++;
     this.phase = PHASE.SPEAKING;
+    this.battleRound = 0;
+    this.battleCandidates = [];
+    this.voteScope = 'all';
+    this.currentSpeechKey = `round-${this.round}`;
+    this.currentSpeechLabel = `第${this.round}轮`;
     this.guessResult = null;
     this.guessingUndercoverId = null;
     this.players.forEach(p => {
@@ -270,9 +282,55 @@ class Room {
     return this.currentSpeakerIndex;
   }
 
+  startBattleSpeaking(candidateIds) {
+    this.archiveCurrentSpeeches();
+
+    this.battleRound++;
+    this.battleCandidates = candidateIds.filter(id => {
+      const player = this.players.find(p => p.id === id);
+      return player?.alive;
+    });
+    this.voteScope = 'battle';
+    this.phase = PHASE.SPEAKING;
+    this.currentSpeechKey = `round-${this.round}-battle-${this.battleRound}`;
+    this.currentSpeechLabel = `平票battle-${this.battleRound}`;
+    this.guessResult = null;
+    this.guessingUndercoverId = null;
+    this.players.forEach(p => {
+      p.speech = null;
+      p.vote = null;
+    });
+
+    this.speakingOrder = shuffleArray(this.battleCandidates);
+    this.speakingOrderIndex = 0;
+    this.currentSpeakerIndex = this.players.findIndex(p => p.id === this.speakingOrder[0]);
+    return this.currentSpeakerIndex;
+  }
+
+  archiveCurrentSpeeches() {
+    if (!this.currentSpeechKey) return;
+
+    const speeches = this.players
+      .filter(p => p.speech !== null)
+      .map(p => ({ id: p.id, name: p.name, speech: p.speech }));
+
+    if (speeches.length === 0) return;
+    if (this.speechHistory.some(entry => entry.key === this.currentSpeechKey)) return;
+
+    this.speechHistory.push({
+      key: this.currentSpeechKey,
+      label: this.currentSpeechLabel || `第${this.round}轮`,
+      round: this.round,
+      battleRound: this.voteScope === 'battle' ? this.battleRound : 0,
+      type: this.voteScope === 'battle' ? 'battle' : 'round',
+      speeches,
+    });
+  }
+
   submitSpeech(playerId, speech) {
     const player = this.players.find(p => p.id === playerId);
     if (!player || !player.alive) return { error: '无效操作' };
+    if (this.speakingOrder[this.speakingOrderIndex] !== playerId) return { error: '还没轮到你发言' };
 
     player.speech = speech;
 
@@ -299,6 +357,9 @@ class Room {
 
     const target = this.players.find(p => p.id === targetId);
     if (!target || !target.alive) return { error: '目标无效' };
+    if (this.voteScope === 'battle' && !this.battleCandidates.includes(targetId)) {
+      return { error: '只能投给平票候选人' };
+    }
 
     player.vote = targetId;
 
@@ -312,6 +373,10 @@ class Room {
   }
 
   resolveVotes() {
+    const submittedVotes = this.players
+      .filter(p => p.vote)
+      .map(p => ({ from: p.id, to: p.vote }));
+
     // 统计票数
     const voteCount = {};
     this.players.forEach(p => {
@@ -332,15 +397,34 @@ class Room {
       }
     }
 
-    this.phase = PHASE.RESULT;
     let eliminatedPlayer = null;
 
-    if (candidates.length === 1) {
-      // 淘汰得票最高的人
-      eliminatedPlayer = this.players.find(p => p.id === candidates[0]);
-      eliminatedPlayer.alive = false;
+    if (candidates.length > 1) {
+      this.voteResult = {
+        voteCount,
+        eliminated: null,
+        tie: true,
+        tieBattle: true,
+        battleRound: this.battleRound + 1,
+        tiedPlayers: candidates.map(id => {
+          const player = this.players.find(p => p.id === id);
+          return { id, name: player?.name || '未知' };
+        }),
+      };
+      this.startBattleSpeaking(candidates);
+      return {
+        voteResult: this.voteResult,
+        gameOver: null,
+        votes: submittedVotes,
+        tieBattle: true,
+      };
     }
-    // 平票则无人淘汰
+
+    this.phase = PHASE.RESULT;
+    eliminatedPlayer = this.players.find(p => p.id === candidates[0]);
+    eliminatedPlayer.alive = false;
+    this.battleCandidates = [];
+    this.voteScope = 'all';
 
     this.voteResult = {
       voteCount,
@@ -349,7 +433,7 @@ class Room {
         name: eliminatedPlayer.name,
         role: eliminatedPlayer.role,
       } : null,
-      tie: candidates.length > 1,
+      tie: false,
     };
 
     // 检查胜负（传入本轮被淘汰的玩家，用于判断是否触发卧底猜词）
@@ -358,9 +442,7 @@ class Room {
     return {
       voteResult: this.voteResult,
       gameOver,
-      votes: this.players
-        .filter(p => p.vote)
-        .map(p => ({ from: p.id, to: p.vote })),
+      votes: submittedVotes,
     };
   }
 
@@ -462,6 +544,9 @@ class Room {
   }
 
   getPublicState() {
+    const aliveCivilianCount = this.players.filter(p => p.alive && p.role === 'civilian').length;
+    const aliveUndercoverCount = this.players.filter(p => p.alive && p.role === 'undercover').length;
+
     return {
       id: this.id,
       hostId: this.hostId,
@@ -469,6 +554,13 @@ class Room {
       round: this.round,
       undercoverCount: this.undercoverCount,
       undercoverGuessMode: this.undercoverGuessMode,
+      aliveCivilianCount,
+      aliveUndercoverCount,
+      battleRound: this.battleRound,
+      battleCandidates: [...this.battleCandidates],
+      voteScope: this.voteScope,
+      currentSpeechKey: this.currentSpeechKey,
+      currentSpeechLabel: this.currentSpeechLabel,
       currentSpeakerIndex: this.currentSpeakerIndex,
       currentSpeakerId: this.currentSpeakerIndex >= 0 ? this.players[this.currentSpeakerIndex]?.id : null,
       voteResult: this.voteResult,
@@ -533,6 +625,11 @@ class Room {
     this.wordChangeCount = 0;
     this.speakingOrder = [];
     this.speakingOrderIndex = 0;
+    this.battleRound = 0;
+    this.battleCandidates = [];
+    this.voteScope = 'all';
+    this.currentSpeechKey = null;
+    this.currentSpeechLabel = null;
     this.lastUndercoverIds = new Set();
     this.guessingUndercoverId = null;
     this.guessResult = null;
@@ -561,6 +658,11 @@ class Room {
     this.wordChangeCount = 0;
     this.speakingOrder = [];
     this.speakingOrderIndex = 0;
+    this.battleRound = 0;
+    this.battleCandidates = [];
+    this.voteScope = 'all';
+    this.currentSpeechKey = null;
+    this.currentSpeechLabel = null;
     this.guessingUndercoverId = null;
     this.guessResult = null;
     this.speechHistory = [];

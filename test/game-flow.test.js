@@ -71,6 +71,14 @@ function voteOut(room, targetId) {
   return finalResult;
 }
 
+function submitVotes(room, votesByPlayer) {
+  let finalResult;
+  for (const [playerId, targetId] of Object.entries(votesByPlayer)) {
+    finalResult = room.submitVote(playerId, targetId);
+  }
+  return finalResult;
+}
+
 function expectRoleCounts(room, { civilians, undercovers }) {
   const aliveCivilian = room.players.filter((player) => player.alive && player.role === 'civilian').length;
   const aliveUndercover = room.players.filter((player) => player.alive && player.role === 'undercover').length;
@@ -161,4 +169,57 @@ test('10-player 3-undercover game protects multi-round undercover guess flow', (
   assert.equal(room.phase, PHASE.GAME_OVER);
   assert.equal(room.winner, 'undercover');
   assert.equal(room.getPublicState().undercoverWord, 'pear');
+});
+
+test('tie votes create numbered battle speech rounds until one player is eliminated', () => {
+  const room = createStartedRoom({ playerCount: 4, undercoverCount: 1 });
+  forceRoles(room, ['p4']);
+
+  submitAllSpeeches(room);
+  let voteResult = submitVotes(room, {
+    p1: 'p3',
+    p2: 'p4',
+    p3: 'p4',
+    p4: 'p3',
+  });
+
+  assert.equal(voteResult.tieBattle, true);
+  assert.equal(room.phase, PHASE.SPEAKING);
+  assert.equal(room.currentSpeechLabel, '平票battle-1');
+  assert.deepEqual(new Set(room.battleCandidates), new Set(['p3', 'p4']));
+  assert.equal(room.speechHistory.at(-1).label, '第1轮');
+
+  for (const playerId of [...room.speakingOrder]) {
+    room.submitSpeech(playerId, { type: 'text', content: `${playerId} battle 1` });
+  }
+  assert.equal(room.phase, PHASE.VOTING);
+
+  voteResult = submitVotes(room, {
+    p1: 'p3',
+    p2: 'p4',
+    p3: 'p4',
+    p4: 'p3',
+  });
+
+  assert.equal(voteResult.tieBattle, true);
+  assert.equal(room.phase, PHASE.SPEAKING);
+  assert.equal(room.currentSpeechLabel, '平票battle-2');
+  assert.equal(room.speechHistory.at(-1).label, '平票battle-1');
+
+  for (const playerId of [...room.speakingOrder]) {
+    room.submitSpeech(playerId, { type: 'text', content: `${playerId} battle 2` });
+  }
+  assert.equal(room.phase, PHASE.VOTING);
+
+  voteResult = submitVotes(room, {
+    p1: 'p4',
+    p2: 'p4',
+    p3: 'p4',
+    p4: 'p3',
+  });
+
+  assert.equal(voteResult.voteResult.tie, false);
+  assert.equal(voteResult.voteResult.eliminated.id, 'p4');
+  assert.equal(voteResult.gameOver.guessRequired, true);
+  assert.equal(room.phase, PHASE.UNDERCOVER_GUESS);
 });
