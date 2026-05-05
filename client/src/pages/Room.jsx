@@ -34,6 +34,13 @@ export default function Room({ roomState, playerId, isSpectator, onLeave }) {
     socket.emit('set-undercover-guess-mode', { mode });
   };
 
+  const setBlankEnabled = (enabled) => {
+    socket.emit('set-blank-enabled', { enabled });
+  };
+
+  const blankEnabled = !!roomState.blankEnabled;
+  const blankMinPlayersUnmet = blankEnabled && roomState.players.length < 5;
+
   return (
     <div className="card animate-fade-in space-y-5">
       {/* 房间号 */}
@@ -142,8 +149,8 @@ export default function Room({ roomState, playerId, isSpectator, onLeave }) {
             <p className="text-sm font-bold text-violet-700">猜词触发</p>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { value: 'every_undercover', label: '每次淘汰', hint: '任一卧底出局都猜' },
-                { value: 'final_undercover', label: '最后卧底', hint: '仅最后卧底出局猜' },
+                { value: 'every_undercover', label: '每次淘汰', hint: '任一卧底/白板出局都猜' },
+                { value: 'final_undercover', label: '最后非平民', hint: '最后非平民出局再猜' },
               ].map(option => {
                 const active = (roomState.undercoverGuessMode || 'every_undercover') === option.value;
                 return (
@@ -164,6 +171,32 @@ export default function Room({ roomState, playerId, isSpectator, onLeave }) {
                 );
               })}
             </div>
+          </div>
+
+          <div className="pt-3 border-t border-violet-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold text-violet-700">白板（无词卧底）</p>
+              <button
+                role="switch"
+                aria-checked={blankEnabled}
+                onClick={() => setBlankEnabled(!blankEnabled)}
+                className={`relative w-11 h-6 rounded-full transition-colors active:scale-95 ${
+                  blankEnabled ? 'bg-violet-500' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
+                    blankEnabled ? 'translate-x-5' : ''
+                  }`}
+                />
+              </button>
+            </div>
+            <p className="text-[11px] text-violet-400 leading-relaxed">
+              开启后随机指定 1 名玩家为白板（无词，独立阵营）。所有卧底出局且白板存活则白板独胜；卧底胜利需玩家剩 2 人（&lt;7 人局）或 3 人（≥7 人局）。需至少 5 人。
+            </p>
+            {blankMinPlayersUnmet && (
+              <p className="text-[11px] text-orange-500">当前不足 5 人，开始游戏前请先满足人数。</p>
+            )}
           </div>
         </div>
       )}

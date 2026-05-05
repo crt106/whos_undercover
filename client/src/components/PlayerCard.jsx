@@ -72,11 +72,13 @@ export default function PlayerCard({
             className={`absolute -top-1.5 -right-2 min-w-6 h-5 px-1 rounded-full border-2 border-white shadow-md flex items-center justify-center text-[10px] leading-none font-black ${
               player.role === 'undercover'
                 ? 'bg-red-500 text-white'
-                : 'bg-blue-500 text-white'
+                : player.role === 'blank'
+                  ? 'bg-gray-500 text-white'
+                  : 'bg-blue-500 text-white'
             }`}
-            title={player.role === 'undercover' ? '卧底' : '平民'}
+            title={player.role === 'undercover' ? '卧底' : player.role === 'blank' ? '白板' : '平民'}
           >
-            {player.role === 'undercover' ? '卧' : '平'}
+            {player.role === 'undercover' ? '卧' : player.role === 'blank' ? '白' : '平'}
           </span>
         )}
       </div>
@@ -98,9 +100,13 @@ export default function PlayerCard({
       {/* 角色显示 */}
       {showRole && player.role && (
         <span className={`text-xs font-bold ${
-          player.role === 'undercover' ? 'text-red-500' : 'text-blue-500'
+          player.role === 'undercover'
+            ? 'text-red-500'
+            : player.role === 'blank'
+              ? 'text-gray-500'
+              : 'text-blue-500'
         }`}>
-          {player.role === 'undercover' ? '卧底' : '平民'}
+          {player.role === 'undercover' ? '卧底' : player.role === 'blank' ? '白板' : '平民'}
         </span>
       )}
       {/* 已投票标记 */}

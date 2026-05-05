@@ -28,6 +28,17 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
     }
   }, [voteResult]);
 
+  // 猜词结果到达时自动重新弹出结果弹窗
+  // （玩家通常会先关闭淘汰弹窗去填写猜词输入框，提交后需要重新看到结果反馈）
+  const guessResultKey = roomState.guessResult
+    ? `${roomState.guessResult.playerId}:${roomState.guessResult.correct ? 1 : 0}:${roomState.guessResult.timeout ? 1 : 0}`
+    : '';
+  useEffect(() => {
+    if (guessResultKey) {
+      setShowResult(true);
+    }
+  }, [guessResultKey]);
+
   // 阶段变化时重置
   useEffect(() => {
     if (roomState.phase === 'speaking') {
@@ -124,20 +135,24 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
     .map(p => p.name)
     .join('、');
 
+  const isBlankMode = !!roomState.blankEnabled;
+  const guessingPlayer = roomState.players.find(p => p.id === roomState.guessingUndercoverId);
+  const guessingRoleLabel = guessingPlayer?.role === 'blank' ? '白板' : '卧底';
+
   const phaseLabel = {
     playing: '准备阶段',
     speaking: isBattle ? `${battleLabel} · 发言中` : `第 ${roomState.round} 轮 · 发言中`,
     voting: isBattle ? `${battleLabel} · 再投票` : `第 ${roomState.round} 轮 · 投票中`,
     result: `第 ${roomState.round} 轮 · 投票结果`,
     undercover_guess: roomState.undercoverGuessMode === 'final_undercover'
-      ? '卧底最后机会 · 猜词中'
-      : '卧底猜词机会 · 猜词中',
+      ? `${guessingRoleLabel}最后机会 · 猜词中`
+      : `${guessingRoleLabel}猜词机会 · 猜词中`,
     game_over: '游戏结束',
   };
 
   const isGuessingUndercover = playerId === roomState.guessingUndercoverId;
-  const guessingPlayer = roomState.players.find(p => p.id === roomState.guessingUndercoverId);
   const showAliveRoleCounts = ['playing', 'speaking', 'voting', 'result', 'undercover_guess', 'game_over'].includes(roomState.phase);
+  const isBlankSelf = myRole === 'blank';
 
   // 检查是否有离线玩家（活着的）
   const offlinePlayers = roomState.players.filter(p => p.alive && p.online === false);
@@ -249,7 +264,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
                   平民 {roomState.aliveCivilianCount ?? 0}
                 </span>
                 <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700">
-                  卧底 {roomState.aliveUndercoverCount ?? 0}
+                  {isBlankMode ? '非平民' : '卧底'} {roomState.aliveNonCivilianCount ?? 0}
                 </span>
               </div>
             )}
@@ -273,17 +288,25 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       </div>
 
       {/* 我的词语 */}
-      {myWord && me?.alive && (
+      {me?.alive && (myWord || isBlankSelf) && (
         <div className="card !p-4 text-center">
-          <p className="text-xs text-violet-400 mb-1">我的词语（点击查看）</p>
+          <p className="text-xs text-violet-400 mb-1">
+            {isBlankSelf ? '你的身份（点击查看）' : '我的词语（点击查看）'}
+          </p>
           <div
             className="cursor-pointer select-none"
             onClick={() => setShowWord(!showWord)}
           >
             {showWord ? (
-              <span className="text-2xl font-black text-violet-700 animate-fade-in">
-                {myWord}
-              </span>
+              isBlankSelf ? (
+                <span className="text-2xl font-black text-gray-500 animate-fade-in">
+                  白板（无词，请伪装）
+                </span>
+              ) : (
+                <span className="text-2xl font-black text-violet-700 animate-fade-in">
+                  {myWord}
+                </span>
+              )
             ) : (
               <span className="text-2xl font-black text-violet-200">
                 ● ● ●
@@ -428,13 +451,15 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
         />
       )}
 
-      {/* 卧底猜词 */}
+      {/* 卧底/白板猜词 */}
       {roomState.phase === 'undercover_guess' && isGuessingUndercover && !isSpectator && (
         <div className="card !p-4 space-y-3 animate-bounce-in border-2 border-red-300">
           <p className="text-sm font-bold text-red-700 text-center">
             🕵️ {roomState.undercoverGuessMode === 'final_undercover' ? '你的最后一次机会！' : '你的猜词机会！'}
           </p>
-          <p className="text-xs text-red-500 text-center">猜出平民的词语，卧底即可获胜！</p>
+          <p className="text-xs text-red-500 text-center">
+            {myRole === 'blank' ? '猜出平民的词语，白板独胜！' : '猜出平民的词语，卧底获胜！'}
+          </p>
           <div className="flex gap-2">
             <input
               type="text"
@@ -459,9 +484,11 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       {roomState.phase === 'undercover_guess' && (!isGuessingUndercover || isSpectator) && guessingPlayer && (
         <div className="card !p-4 text-center space-y-1">
           <p className="text-violet-600 text-sm">
-            🕵️ <span className="font-bold">{guessingPlayer.name}</span> 正在尝试猜出平民词语...
+            🕵️ <span className="font-bold">{guessingPlayer.name}</span>（{guessingRoleLabel}）正在尝试猜出平民词语...
           </p>
-          <p className="text-xs text-violet-400">猜对则卧底获胜！</p>
+          <p className="text-xs text-violet-400">
+            {guessingPlayer.role === 'blank' ? '猜对则白板独胜！' : '猜对则卧底获胜！'}
+          </p>
         </div>
       )}
 
@@ -481,29 +508,37 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
       {roomState.phase === 'game_over' && !showResult && (
         <div className="card !p-4 text-center space-y-4">
           <div className="text-4xl">
-            {roomState.winner === 'civilian' ? '🎉' : '🕵️'}
+            {roomState.winner === 'civilian' ? '🎉' : roomState.winner === 'blank' ? '🏳️' : '🕵️'}
           </div>
           <p className="text-xl font-black text-violet-700">
-            {roomState.winner === 'civilian' ? '平民胜利！' : '卧底胜利！'}
+            {roomState.winner === 'civilian'
+              ? '平民胜利！'
+              : roomState.winner === 'blank'
+                ? '白板独胜！'
+                : '卧底胜利！'}
           </p>
           {/* 猜词结果说明 */}
-          {roomState.guessResult && (
-            <div className="bg-violet-50 rounded-xl p-3 text-sm space-y-1">
-              {roomState.guessResult.timeout ? (
-                <p className="text-violet-500">
-                  卧底未在限时内猜出词语
-                  {roomState.winner === 'civilian' ? '，平民获胜' : '，游戏继续'}
-                </p>
-              ) : roomState.guessResult.correct ? (
-                <p className="text-green-600 font-bold">卧底猜对了「{roomState.civilianWord}」，获胜！</p>
-              ) : (
-                <p className="text-red-500">
-                  卧底猜了「{roomState.guessResult.guess}」，猜错了
-                  {roomState.winner === 'civilian' ? `，答案是「${roomState.civilianWord}」` : '，游戏继续'}
-                </p>
-              )}
-            </div>
-          )}
+          {roomState.guessResult && (() => {
+            const guesser = roomState.players.find(p => p.id === roomState.guessResult.playerId);
+            const guesserLabel = guesser?.role === 'blank' ? '白板' : '卧底';
+            return (
+              <div className="bg-violet-50 rounded-xl p-3 text-sm space-y-1">
+                {roomState.guessResult.timeout ? (
+                  <p className="text-violet-500">
+                    {guesserLabel}未在限时内猜出词语
+                    {roomState.winner === 'civilian' ? '，平民获胜' : '，游戏继续'}
+                  </p>
+                ) : roomState.guessResult.correct ? (
+                  <p className="text-green-600 font-bold">{guesserLabel}猜对了「{roomState.civilianWord}」，获胜！</p>
+                ) : (
+                  <p className="text-red-500">
+                    {guesserLabel}猜了「{roomState.guessResult.guess}」，猜错了
+                    {roomState.winner === 'civilian' ? `，答案是「${roomState.civilianWord}」` : '，游戏继续'}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
           {roomState.civilianWord && (
             <div className="text-sm text-violet-500 space-y-1">
               <p>平民词：<span className="font-bold">{roomState.civilianWord}</span></p>

@@ -6,6 +6,23 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
   const tiedPlayerNames = voteResult.voteResult?.tiedPlayers?.map(p => p.name).join('、') || '';
   const isGuessingUndercover = Boolean(roomState.guessingUndercoverId)
     && voteResult.voteResult?.eliminated?.id === roomState.guessingUndercoverId;
+  const isBlankMode = !!roomState.blankEnabled;
+  const eliminatedRole = voteResult.voteResult?.eliminated?.role;
+  const eliminatedRoleLabel = eliminatedRole === 'undercover'
+    ? '卧底'
+    : eliminatedRole === 'blank'
+      ? '白板'
+      : '平民';
+  const guesserPlayer = roomState.guessResult
+    ? roomState.players.find(p => p.id === roomState.guessResult.playerId)
+    : null;
+  const guesserLabel = guesserPlayer?.role === 'blank' ? '白板' : '卧底';
+  const winnerEmoji = (winner) => winner === 'civilian' ? '🎉' : winner === 'blank' ? '🏳️' : '🕵️';
+  const winnerLabel = (winner) => winner === 'civilian'
+    ? '平民胜利！'
+    : winner === 'blank'
+      ? '白板独胜！'
+      : '卧底胜利！';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -30,10 +47,13 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
                   {voteResult.voteResult.eliminated.name} 被淘汰了
                 </p>
                 <p className={`font-bold ${
-                  voteResult.voteResult.eliminated.role === 'undercover'
-                    ? 'text-red-500' : 'text-blue-500'
+                  eliminatedRole === 'undercover'
+                    ? 'text-red-500'
+                    : eliminatedRole === 'blank'
+                      ? 'text-gray-500'
+                      : 'text-blue-500'
                 }`}>
-                  TA是{voteResult.voteResult.eliminated.role === 'undercover' ? '卧底' : '平民'}！
+                  TA是{eliminatedRoleLabel}！
                 </p>
               </>
             ) : null}
@@ -59,11 +79,9 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
         {/* 游戏结束 */}
         {isGameOver && voteResult.gameOver && !voteResult.gameOver.guessRequired && (
           <div className="text-center space-y-2 pt-2 border-t border-violet-100">
-            <div className="text-5xl">
-              {voteResult.gameOver.winner === 'civilian' ? '🎉' : '🕵️'}
-            </div>
+            <div className="text-5xl">{winnerEmoji(voteResult.gameOver.winner)}</div>
             <p className="text-2xl font-black text-violet-700">
-              {voteResult.gameOver.winner === 'civilian' ? '平民胜利！' : '卧底胜利！'}
+              {winnerLabel(voteResult.gameOver.winner)}
             </p>
             <div className="text-sm text-violet-500 space-y-1">
               <p>平民词：<span className="font-bold">{voteResult.gameOver.civilianWord}</span></p>
@@ -72,31 +90,32 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
           </div>
         )}
 
-        {/* 卧底进入猜词阶段提示 */}
-        {(isUndercoverGuess || (voteResult.gameOver?.guessRequired && !roomState.guessResult)) && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center space-y-1">
-            <p className="text-sm font-bold text-red-700">
-              🕵️ {isFinalGuessMode ? '卧底的最后机会！' : '卧底的猜词机会！'}
-            </p>
-            <p className="text-xs text-red-500">卧底被淘汰，还有 30 秒猜出平民词语获胜！</p>
-          </div>
-        )}
+        {/* 卧底/白板进入猜词阶段提示 */}
+        {(isUndercoverGuess || (voteResult.gameOver?.guessRequired && !roomState.guessResult)) && (() => {
+          const triggerRole = eliminatedRole === 'blank' ? '白板' : '卧底';
+          return (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center space-y-1">
+              <p className="text-sm font-bold text-red-700">
+                🕵️ {isFinalGuessMode ? `${triggerRole}的最后机会！` : `${triggerRole}的猜词机会！`}
+              </p>
+              <p className="text-xs text-red-500">{triggerRole}被淘汰，还有 30 秒猜出平民词语获胜！</p>
+            </div>
+          );
+        })()}
 
         {isGameOver && roomState.guessResult && (
           <div className="text-center space-y-2 pt-2 border-t border-violet-100">
-            <div className="text-5xl">
-              {roomState.winner === 'civilian' ? '🎉' : '🕵️'}
-            </div>
+            <div className="text-5xl">{winnerEmoji(roomState.winner)}</div>
             <p className="text-2xl font-black text-violet-700">
-              {roomState.winner === 'civilian' ? '平民胜利！' : '卧底胜利！'}
+              {winnerLabel(roomState.winner)}
             </p>
             <div className="bg-violet-50 rounded-xl p-3 text-sm space-y-1">
               {roomState.guessResult.timeout ? (
-                <p className="text-violet-500">卧底未在限时内猜出词语</p>
+                <p className="text-violet-500">{guesserLabel}未在限时内猜出词语</p>
               ) : roomState.guessResult.correct ? (
-                <p className="text-green-600 font-bold">卧底猜对了「{roomState.civilianWord}」</p>
+                <p className="text-green-600 font-bold">{guesserLabel}猜对了「{roomState.civilianWord}」</p>
               ) : (
-                <p className="text-red-500">卧底猜了「{roomState.guessResult.guess}」，猜错了</p>
+                <p className="text-red-500">{guesserLabel}猜了「{roomState.guessResult.guess}」，猜错了</p>
               )}
             </div>
             <div className="text-sm text-violet-500 space-y-1">
@@ -106,13 +125,13 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
           </div>
         )}
 
-        {/* 非最后卧底猜错后，游戏继续 */}
+        {/* 非最后卧底/白板猜错后，游戏继续 */}
         {!isGameOver && !isUndercoverGuess && roomState.guessResult && !roomState.guessResult.correct && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center space-y-1">
             <p className="text-sm font-bold text-amber-700">
-              {roomState.guessResult.timeout ? '卧底猜词超时' : '卧底猜词失败'}
+              {roomState.guessResult.timeout ? `${guesserLabel}猜词超时` : `${guesserLabel}猜词失败`}
             </p>
-            <p className="text-xs text-amber-600">仍有卧底存活，游戏继续。</p>
+            <p className="text-xs text-amber-600">仍有非平民存活，游戏继续。</p>
           </div>
         )}
 

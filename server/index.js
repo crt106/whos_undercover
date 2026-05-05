@@ -285,6 +285,22 @@ gameIo.on('connection', (socket) => {
     if (callback) callback({ success: true });
   });
 
+  socket.on('set-blank-enabled', ({ enabled }, callback) => {
+    const info = socketMap.get(socket.id);
+    if (!info) return;
+    const room = getRoom(info.roomId);
+    if (!room || info.playerId !== room.hostId) return;
+
+    const result = room.setBlankEnabled(enabled);
+    if (result.error) {
+      if (callback) callback({ error: result.error });
+      return;
+    }
+
+    gameIo.to(room.id).emit('room-update', room.getPublicState());
+    if (callback) callback({ success: true });
+  });
+
   socket.on('start-game', (_, callback) => {
     const info = socketMap.get(socket.id);
     if (!info) return;
@@ -314,6 +330,7 @@ gameIo.on('connection', (socket) => {
       hostName: host ? host.name : '未知',
       playerCount: room.players.length,
       undercoverCount: room.undercoverCount,
+      blankEnabled: room.blankEnabled,
       startTime: new Date().toISOString(),
       players: room.players.map(p => ({ name: p.name, avatar: p.avatar })),
     });

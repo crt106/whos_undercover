@@ -33,6 +33,7 @@ class Room {
     this.phase = PHASE.WAITING;
     this.undercoverCount = 1;
     this.undercoverGuessMode = UNDERCOVER_GUESS_MODE.EVERY;
+    this.blankEnabled = false; // 是否启用白板（无词卧底）
     this.round = 0;
     this.currentSpeakerIndex = -1;
     this.civilianWord = '';
@@ -44,7 +45,7 @@ class Room {
     this.changeWordVotes = new Set(); // 当前一轮投票换词的玩家ID集合
     this.wordChanged = false;         // 本局是否发生过换词
     this.wordChangeCount = 0;         // 本局换词次数，用于客户端重置准备倒计时
-    this.lastUndercoverIds = new Set(); // 上一局卧底的玩家ID
+    this.lastNonCivilianIds = new Set(); // 上一局非平民（卧底+白板）玩家ID
     this.speakingOrder = [];           // 当前局随机发言顺序（玩家ID数组）
     this.speakingOrderIndex = 0;       // 当前发言者在 speakingOrder 中的位置
     this.battleRound = 0;              // 当前大轮内第几次平票 battle
@@ -133,8 +134,14 @@ class Room {
     return this.players.length >= 4 && this.players.every(p => p.id === this.hostId || p.ready);
   }
 
+  // 启用白板时为白板预留 1 个非平民名额
+  getNonCivilianReserve() {
+    return this.blankEnabled ? 1 : 0;
+  }
+
   getMaxUndercoverCount() {
-    return Math.max(1, Math.floor((this.players.length - 1) / 2));
+    const reserved = this.getNonCivilianReserve();
+    return Math.max(1, Math.floor((this.players.length - 1) / 2) - reserved);
   }
 
   normalizeUndercoverCount() {
@@ -156,34 +163,67 @@ class Room {
     return { success: true };
   }
 
+  setBlankEnabled(enabled) {
+    if (this.phase !== PHASE.WAITING) {
+      return { error: '仅等待阶段可以修改白板模式' };
+    }
+    this.blankEnabled = !!enabled;
+    this.normalizeUndercoverCount();
+    return { success: true };
+  }
+
   startGame() {
     if (this.players.length < 4) return { error: '至少需要4名玩家' };
 
     this.normalizeUndercoverCount();
 
+    const reserve = this.getNonCivilianReserve();
+    // 启用白板时需保证非平民人数严格少于平民
+    if (this.undercoverCount + reserve > Math.floor((this.players.length - 1) / 2)) {
+      return { error: '当前人数不足以同时容纳卧底与白板' };
+    }
+    if (this.blankEnabled && this.players.length < 5) {
+      return { error: '白板模式至少需要5名玩家' };
+    }
+
     const { civilianWord, undercoverWord } = getRandomWordPair();
     this.civilianWord = civilianWord;
     this.undercoverWord = undercoverWord;
 
-    // 随机选择卧底（使用 Fisher-Yates，尽量不选上一局的卧底）
+    // 随机选择非平民（卧底 + 白板），尽量不选上一局的非平民
     let playerIds = this.players.map(p => p.id);
     const shuffled = shuffleArray(playerIds);
 
-    // 若玩家数足够，将上一局卧底移到候选末尾，减少重复概率
-    if (this.lastUndercoverIds.size > 0 && this.players.length > this.undercoverCount + this.lastUndercoverIds.size) {
-      const nonLast = shuffled.filter(id => !this.lastUndercoverIds.has(id));
-      const last = shuffled.filter(id => this.lastUndercoverIds.has(id));
+    const totalNonCivilian = this.undercoverCount + reserve;
+    if (this.lastNonCivilianIds.size > 0 && this.players.length > totalNonCivilian + this.lastNonCivilianIds.size) {
+      const nonLast = shuffled.filter(id => !this.lastNonCivilianIds.has(id));
+      const last = shuffled.filter(id => this.lastNonCivilianIds.has(id));
       shuffled.length = 0;
       shuffled.push(...nonLast, ...last);
     }
 
     const undercoverIds = new Set(shuffled.slice(0, this.undercoverCount));
-    this.lastUndercoverIds = new Set(undercoverIds);
+    const blankId = this.blankEnabled
+      ? shuffled.slice(this.undercoverCount, this.undercoverCount + 1)[0]
+      : null;
+
+    this.lastNonCivilianIds = new Set([
+      ...undercoverIds,
+      ...(blankId ? [blankId] : []),
+    ]);
 
     this.players.forEach(p => {
       p.alive = true;
-      p.role = undercoverIds.has(p.id) ? 'undercover' : 'civilian';
-      p.word = p.role === 'undercover' ? undercoverWord : civilianWord;
+      if (undercoverIds.has(p.id)) {
+        p.role = 'undercover';
+        p.word = undercoverWord;
+      } else if (p.id === blankId) {
+        p.role = 'blank';
+        p.word = null;
+      } else {
+        p.role = 'civilian';
+        p.word = civilianWord;
+      }
       p.vote = null;
       p.speech = null;
     });
@@ -236,7 +276,9 @@ class Room {
     this.undercoverWord = undercoverWord;
 
     this.players.forEach(p => {
-      p.word = p.role === 'undercover' ? undercoverWord : civilianWord;
+      if (p.role === 'undercover') p.word = undercoverWord;
+      else if (p.role === 'blank') p.word = null;
+      else p.word = civilianWord;
       p.speech = null;
     });
 
@@ -446,17 +488,26 @@ class Room {
     };
   }
 
+  // 卧底胜利的存活人数阈值：< 7 时 2 人，>= 7 时 3 人
+  getUndercoverWinThreshold() {
+    return this.players.length >= 7 ? 3 : 2;
+  }
+
   checkWin(eliminatedPlayer = null) {
     const aliveUndercover = this.players.filter(p => p.alive && p.role === 'undercover').length;
+    const aliveBlank = this.players.filter(p => p.alive && p.role === 'blank').length;
     const aliveCivilian = this.players.filter(p => p.alive && p.role === 'civilian').length;
+    const aliveNonCivilian = aliveUndercover + aliveBlank;
+    const aliveTotal = aliveNonCivilian + aliveCivilian;
 
-    const eliminatedUndercoverNeedsGuess = eliminatedPlayer?.role === 'undercover'
+    const eliminatedNonCivilian = eliminatedPlayer?.role === 'undercover' || eliminatedPlayer?.role === 'blank';
+    const needsGuess = eliminatedNonCivilian
       && (
         this.undercoverGuessMode === UNDERCOVER_GUESS_MODE.EVERY
-        || (this.undercoverGuessMode === UNDERCOVER_GUESS_MODE.FINAL && aliveUndercover === 0)
+        || (this.undercoverGuessMode === UNDERCOVER_GUESS_MODE.FINAL && aliveNonCivilian === 0)
       );
 
-    if (eliminatedUndercoverNeedsGuess) {
+    if (needsGuess) {
       this.phase = PHASE.UNDERCOVER_GUESS;
       this.guessingUndercoverId = eliminatedPlayer.id;
       return {
@@ -466,14 +517,35 @@ class Room {
       };
     }
 
-    if (aliveUndercover === 0) {
+    return this.evaluateWinCondition();
+  }
+
+  // 不依赖被淘汰者的胜负判定，供猜词阶段后复用
+  evaluateWinCondition() {
+    const aliveUndercover = this.players.filter(p => p.alive && p.role === 'undercover').length;
+    const aliveBlank = this.players.filter(p => p.alive && p.role === 'blank').length;
+    const aliveCivilian = this.players.filter(p => p.alive && p.role === 'civilian').length;
+    const aliveNonCivilian = aliveUndercover + aliveBlank;
+    const aliveTotal = aliveNonCivilian + aliveCivilian;
+
+    // 平民胜：所有卧底+白板都出局
+    if (aliveNonCivilian === 0) {
       this.winner = 'civilian';
       this.phase = PHASE.GAME_OVER;
       this.inactiveStartTime = Date.now();
       return { winner: 'civilian', civilianWord: this.civilianWord, undercoverWord: this.undercoverWord };
     }
 
-    if (aliveUndercover >= aliveCivilian) {
+    // 白板独立胜：所有卧底出局且白板存活
+    if (aliveUndercover === 0 && aliveBlank > 0) {
+      this.winner = 'blank';
+      this.phase = PHASE.GAME_OVER;
+      this.inactiveStartTime = Date.now();
+      return { winner: 'blank', civilianWord: this.civilianWord, undercoverWord: this.undercoverWord };
+    }
+
+    // 卧底胜：存活人数到达阈值且卧底未死
+    if (aliveUndercover > 0 && aliveTotal <= this.getUndercoverWinThreshold()) {
       this.winner = 'undercover';
       this.phase = PHASE.GAME_OVER;
       this.inactiveStartTime = Date.now();
@@ -483,11 +555,12 @@ class Room {
     return null;
   }
 
-  // 卧底提交猜词答案
+  // 卧底/白板提交猜词答案
   submitUndercoverGuess(playerId, guess) {
     if (this.phase !== PHASE.UNDERCOVER_GUESS) return { error: '不在猜词阶段' };
-    if (playerId !== this.guessingUndercoverId) return { error: '只有被淘汰的卧底才能猜词' };
+    if (playerId !== this.guessingUndercoverId) return { error: '只有被淘汰的卧底/白板才能猜词' };
 
+    const guessingPlayer = this.players.find(p => p.id === playerId);
     const normalizedGuess = (guess || '').trim().toLowerCase();
     const normalizedAnswer = this.civilianWord.trim().toLowerCase();
     const correct = normalizedGuess === normalizedAnswer;
@@ -495,7 +568,8 @@ class Room {
     this.guessResult = { playerId, guess: normalizedGuess, correct, timeout: false };
 
     if (correct) {
-      this.winner = 'undercover';
+      // 白板猜对独胜，卧底猜对卧底胜
+      this.winner = guessingPlayer?.role === 'blank' ? 'blank' : 'undercover';
       this.phase = PHASE.GAME_OVER;
       this.inactiveStartTime = Date.now();
     } else {
@@ -530,13 +604,9 @@ class Room {
   }
 
   finishFailedUndercoverGuess() {
-    const aliveUndercover = this.players.filter(p => p.alive && p.role === 'undercover').length;
-
-    if (aliveUndercover === 0) {
-      this.winner = 'civilian';
-      this.phase = PHASE.GAME_OVER;
-      this.inactiveStartTime = Date.now();
-    } else {
+    // 与正常淘汰后判定一致：可能触发平民胜 / 白板独胜 / 卧底胜
+    const result = this.evaluateWinCondition();
+    if (!result) {
       this.winner = null;
       this.phase = PHASE.RESULT;
       this.guessingUndercoverId = null;
@@ -545,7 +615,9 @@ class Room {
 
   getPublicState() {
     const aliveCivilianCount = this.players.filter(p => p.alive && p.role === 'civilian').length;
-    const aliveUndercoverCount = this.players.filter(p => p.alive && p.role === 'undercover').length;
+    const aliveNonCivilianCount = this.players.filter(
+      p => p.alive && (p.role === 'undercover' || p.role === 'blank')
+    ).length;
 
     return {
       id: this.id,
@@ -554,8 +626,9 @@ class Room {
       round: this.round,
       undercoverCount: this.undercoverCount,
       undercoverGuessMode: this.undercoverGuessMode,
+      blankEnabled: this.blankEnabled,
       aliveCivilianCount,
-      aliveUndercoverCount,
+      aliveNonCivilianCount,
       battleRound: this.battleRound,
       battleCandidates: [...this.battleCandidates],
       voteScope: this.voteScope,
@@ -630,7 +703,7 @@ class Room {
     this.voteScope = 'all';
     this.currentSpeechKey = null;
     this.currentSpeechLabel = null;
-    this.lastUndercoverIds = new Set();
+    this.lastNonCivilianIds = new Set();
     this.guessingUndercoverId = null;
     this.guessResult = null;
     this.speechHistory = [];
@@ -666,7 +739,7 @@ class Room {
     this.guessingUndercoverId = null;
     this.guessResult = null;
     this.speechHistory = [];
-    // lastUndercoverIds 保留，供下一局避免重复选择
+    // lastNonCivilianIds 保留，供下一局避免重复选择
     this.players.forEach(p => {
       p.ready = p.id === this.hostId;
       p.alive = true;
