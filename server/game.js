@@ -58,6 +58,7 @@ class Room {
     this.speechHistory = [];           // 历史发言记录 [{ round, speeches: [{id, name, speech}] }]
     this.inactiveStartTime = Date.now(); // 进入非活跃状态（waiting/game_over）的时间戳
     this.spectators = [];              // 观战者列表 [{ id, name, avatar, online }]
+    this.privateMessages = [];         // 私聊记录 [{ id, fromId, toId, content, ts, round, phase, speechKey, speechLabel }]
   }
 
   addPlayer(id, name, avatar) {
@@ -613,6 +614,39 @@ class Room {
     }
   }
 
+  sendPrivateMessage(fromId, toId, content) {
+    if (this.phase === PHASE.GAME_OVER) return { error: '本局已结束，无法发送私聊' };
+    const from = this.players.find(p => p.id === fromId);
+    const to = this.players.find(p => p.id === toId);
+    if (!from) return { error: '发送者不在房间内' };
+    if (!to) return { error: '对方不在房间内' };
+    if (fromId === toId) return { error: '不能给自己发送' };
+    if (!from.alive) return { error: '已被淘汰，无法发送私聊' };
+
+    const text = (content == null ? '' : String(content)).trim();
+    if (!text) return { error: '消息不能为空' };
+    if (text.length > 200) return { error: '消息过长（≤200字）' };
+
+    const message = {
+      id: `pm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      fromId,
+      toId,
+      content: text,
+      ts: Date.now(),
+      round: this.round,
+      phase: this.phase,
+      speechKey: this.currentSpeechKey,
+      speechLabel: this.currentSpeechLabel
+        || (this.phase === PHASE.WAITING ? '等待中' : (this.round > 0 ? `第${this.round}轮` : '准备阶段')),
+    };
+    this.privateMessages.push(message);
+    return { message };
+  }
+
+  getPrivateMessagesFor(playerId) {
+    return this.privateMessages.filter(m => m.fromId === playerId || m.toId === playerId);
+  }
+
   getPublicState() {
     const aliveCivilianCount = this.players.filter(p => p.alive && p.role === 'civilian').length;
     const aliveNonCivilianCount = this.players.filter(
@@ -669,6 +703,8 @@ class Room {
         avatar: s.avatar,
         online: s.online,
       })),
+      // 仅游戏结束后公开私聊记录；进行中保持 null，靠定向 socket 推送
+      privateMessages: this.phase === PHASE.GAME_OVER ? this.privateMessages : null,
     };
   }
 
@@ -707,6 +743,7 @@ class Room {
     this.guessingUndercoverId = null;
     this.guessResult = null;
     this.speechHistory = [];
+    this.privateMessages = [];
     this.players.forEach(p => {
       p.ready = p.id === this.hostId;
       p.alive = true;
@@ -739,6 +776,7 @@ class Room {
     this.guessingUndercoverId = null;
     this.guessResult = null;
     this.speechHistory = [];
+    this.privateMessages = [];
     // lastNonCivilianIds 保留，供下一局避免重复选择
     this.players.forEach(p => {
       p.ready = p.id === this.hostId;

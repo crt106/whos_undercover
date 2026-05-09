@@ -614,6 +614,39 @@ gameIo.on('connection', (socket) => {
     }
   });
 
+  // 私聊：发送
+  socket.on('send-private-message', ({ targetId, content }, callback) => {
+    const info = socketMap.get(socket.id);
+    if (!info) { if (callback) callback({ error: '未在房间中' }); return; }
+    if (info.isSpectator) { if (callback) callback({ error: '观战者不能发送私聊' }); return; }
+    const room = getRoom(info.roomId);
+    if (!room) { if (callback) callback({ error: '房间不存在' }); return; }
+
+    const result = room.sendPrivateMessage(info.playerId, targetId, content);
+    if (result.error) { if (callback) callback({ error: result.error }); return; }
+
+    // 仅定向投递给 from / to 双方所有 socket（不广播；观战者不收实时推送）
+    const fromSockets = findPlayerSockets(room.id, info.playerId);
+    const toSockets = findPlayerSockets(room.id, targetId);
+    const seen = new Set();
+    [...fromSockets, ...toSockets].forEach(s => {
+      if (seen.has(s.id)) return;
+      seen.add(s.id);
+      s.emit('private-message', result.message);
+    });
+
+    if (callback) callback({ success: true, message: result.message });
+  });
+
+  // 私聊：重连后拉取自己相关的历史
+  socket.on('request-private-history', (_, callback) => {
+    const info = socketMap.get(socket.id);
+    if (!info || info.isSpectator) { if (callback) callback({ messages: [] }); return; }
+    const room = getRoom(info.roomId);
+    if (!room) { if (callback) callback({ messages: [] }); return; }
+    if (callback) callback({ messages: room.getPrivateMessagesFor(info.playerId) });
+  });
+
   socket.on('disconnect', () => {
     const info = socketMap.get(socket.id);
     if (!info) return;

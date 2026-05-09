@@ -5,6 +5,7 @@ import VoiceRecorder from '../components/VoiceRecorder';
 import VotePanel from '../components/VotePanel';
 import GameResult from '../components/GameResult';
 import Timer from '../components/Timer';
+import PrivateChatPanel from '../components/PrivateChatPanel';
 
 export default function Game({ roomState, playerId, myWord, myRole, voteResult, setVoteResult, disconnectNotice, isSpectator }) {
   const [showWord, setShowWord] = useState(false);
@@ -19,6 +20,13 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
   const currentSpeaker = roomState.players[roomState.currentSpeakerIndex];
   const isMyTurn = currentSpeaker?.id === playerId;
   const lastVibrateKeyRef = useRef(null);
+  const chatPanelRef = useRef(null);
+
+  const openChatWith = (peerId) => {
+    chatPanelRef.current?.openWith(peerId);
+  };
+  const canChatWith = (player) =>
+    !isSpectator && roomState.phase !== 'game_over' && player.id !== playerId;
 
   // 当收到投票结果时显示
   useEffect(() => {
@@ -355,6 +363,7 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
               isVoted={myVote === player.id}
               onVote={() => submitVote(player.id)}
               showRole={roomState.phase === 'game_over'}
+              onChatClick={canChatWith(player) ? () => openChatWith(player.id) : undefined}
             />
           ))}
         </div>
@@ -550,6 +559,63 @@ export default function Game({ roomState, playerId, myWord, myRole, voteResult, 
               再来一局
             </button>
           )}
+        </div>
+      )}
+
+      {/* 游戏结束后公开的私聊归档 */}
+      {roomState.phase === 'game_over' && roomState.privateMessages?.length > 0 && (
+        <PrivateMessagesArchive
+          messages={roomState.privateMessages}
+          players={roomState.players}
+        />
+      )}
+
+      {/* 私聊面板（FAB + 抽屉），观战者与游戏结束时不渲染 */}
+      {!isSpectator && roomState.phase !== 'game_over' && (
+        <PrivateChatPanel
+          ref={chatPanelRef}
+          roomState={roomState}
+          playerId={playerId}
+        />
+      )}
+    </div>
+  );
+}
+
+// 私聊归档 Tab：游戏结束后公开展示所有私聊
+function PrivateMessagesArchive({ messages, players }) {
+  const [open, setOpen] = useState(false);
+  const nameById = Object.fromEntries(players.map(p => [p.id, p.name]));
+  const sorted = [...messages].sort((a, b) => a.ts - b.ts);
+
+  return (
+    <div className="card !p-0 overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-violet-50 hover:bg-violet-100 transition-colors"
+      >
+        <span className="font-bold text-violet-700 text-sm">
+          💬 私聊记录 <span className="text-violet-400 font-normal">（{sorted.length} 条）</span>
+        </span>
+        <span className={`text-violet-500 transition-transform ${open ? 'rotate-180' : ''}`}>▼</span>
+      </button>
+      {open && (
+        <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
+          {sorted.map(m => {
+            const fromName = nameById[m.fromId] || '未知';
+            const toName = nameById[m.toId] || '未知';
+            const label = m.speechLabel || (m.phase === 'waiting' ? '等待中' : (m.round > 0 ? `第${m.round}轮` : '准备阶段'));
+            return (
+              <div key={m.id} className="text-sm leading-relaxed">
+                <span className="text-violet-400 text-xs mr-1">{label}时</span>
+                <span className="font-bold text-violet-700">{fromName}</span>
+                <span className="text-gray-400"> → </span>
+                <span className="font-bold text-violet-700">{toName}</span>
+                <span className="text-gray-500"> 发送私聊：</span>
+                <span className="text-gray-800 break-words">{m.content}</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

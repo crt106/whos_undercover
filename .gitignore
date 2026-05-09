@@ -10,3 +10,7 @@ webhook.config.json
 # pnpm
 pnpm-lock.yaml
 .pnpm-debug.log*
+
+# 本地测试脚本（含密码、个人路径）
+scripts/open-test-clients.ps1
+scripts/open-test-clients.bat

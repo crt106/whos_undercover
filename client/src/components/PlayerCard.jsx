@@ -18,6 +18,8 @@ export default function PlayerCard({
   onVote,
   showReady,
   showRole,
+  onChatClick,
+  chatUnread,
 }) {
   const alive = player.alive !== false;
   const online = player.online !== false;
@@ -66,6 +68,23 @@ export default function PlayerCard({
         {/* 房主标记 */}
         {isHost && !showEliminatedRoleBadge && (
           <span className="absolute -top-1 -right-1 text-xs">👑</span>
+        )}
+        {/* 私聊入口 */}
+        {onChatClick && !isMe && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onChatClick(); }}
+            className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-violet-500 text-white shadow flex items-center justify-center active:scale-90 transition-all"
+            aria-label="私聊"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            {chatUnread > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-red-500 text-[8px] font-bold flex items-center justify-center border border-white">
+                {chatUnread > 9 ? '9+' : chatUnread}
+              </span>
+            )}
+          </button>
         )}
         {showEliminatedRoleBadge && (
           <span

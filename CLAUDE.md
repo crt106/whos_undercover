@@ -144,6 +144,8 @@ Client-to-server events handled in `server/index.js`:
 - `request-spectate`
 - `approve-spectate`
 - `reject-spectate`
+- `send-private-message`
+- `request-private-history`
 
 Server-to-client events used by the React app:
 
@@ -160,6 +162,7 @@ Server-to-client events used by the React app:
 - `spectate-request`
 - `spectate-approved`
 - `spectate-rejected`
+- `private-message`
 
 When changing game behavior, update both the `Room` state transitions and the socket/UI expectations.
 
@@ -203,6 +206,7 @@ The `/api` routes are protected by `requireAuth`, except `/api/verify-password`.
 - The server uses timers for word-preview, final guess, disconnect handling, and inactive room cleanup. Clear timers when closing rooms or resetting flows.
 - The frontend has localStorage-based reconnect behavior for players, but spectators intentionally do not persist room membership.
 - Public room state deliberately hides living players' roles and hides words until game over. Be careful not to leak `word` or `role` in `getPublicState()`.
+- Private chat (1v1 between any two players in the same room) is delivered via `private-message` to the sender's and recipient's sockets only — never broadcast to the room. The full transcript is exposed in `getPublicState().privateMessages` only when `phase === 'game_over'`. Eliminated players cannot send (server-checked) but can still receive. Spectators cannot send and do not receive realtime pushes; they only see the transcript after game over via the public state. `resetForNewGame` and `abortGame` clear `privateMessages`.
 
 ## Verification Guidance
 
