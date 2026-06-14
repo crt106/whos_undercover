@@ -7,6 +7,9 @@ server/uploads/*.webm
 .env
 webhook.config.json
 
+# 玩家投稿词库（运行时数据）
+server/contributed-words.json
+
 # pnpm
 pnpm-lock.yaml
 .pnpm-debug.log*

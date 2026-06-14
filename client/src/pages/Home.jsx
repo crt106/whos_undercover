@@ -31,6 +31,12 @@ export default function Home({ playerName: initialName, playerAvatar: initialAva
   // 从 localStorage 获取已验证的 sessionId
   const [sessionId] = useState(() => localStorage.getItem('gameSessionId') || '');
 
+  // 投稿词汇状态
+  const [contribGroups, setContribGroups] = useState([{ civ: '', und: '' }]);
+  const [contribResult, setContribResult] = useState(null);
+  const [contribLoading, setContribLoading] = useState(false);
+  const [contribError, setContribError] = useState('');
+
   const roomsPerPage = 5;
 
   // 获取房间列表
@@ -214,6 +220,59 @@ export default function Home({ playerName: initialName, playerAvatar: initialAva
     setMode(null);
   };
 
+  // 投稿词汇相关函数
+  const addContribRow = () => setContribGroups((g) => [...g, { civ: '', und: '' }]);
+  const removeContribRow = (i) =>
+    setContribGroups((g) => (g.length > 1 ? g.filter((_, idx) => idx !== i) : g));
+  const updateContribRow = (i, field, val) =>
+    setContribGroups((g) => g.map((row, idx) => (idx === i ? { ...row, [field]: val } : row)));
+
+  const submitContrib = async () => {
+    setContribError('');
+    setContribResult(null);
+
+    // 仅提交至少有一个非空词的行
+    const groups = contribGroups
+      .map((r) => [r.civ.trim(), r.und.trim()])
+      .filter(([a, b]) => a || b);
+
+    if (groups.length === 0) {
+      setContribError('请至少填写一组词');
+      return;
+    }
+
+    setContribLoading(true);
+    try {
+      const resp = await fetch('/api/words/contribute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId },
+        body: JSON.stringify({ contributor: name.trim(), groups }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setContribError(data.error || '投稿失败');
+        return;
+      }
+      setContribResult(data);
+      // 全部成功则清空输入，保留一行
+      if (data.added > 0 && data.skipped.length === 0) {
+        setContribGroups([{ civ: '', und: '' }]);
+      }
+    } catch (err) {
+      console.error('投稿失败:', err);
+      setContribError('网络错误，投稿失败');
+    } finally {
+      setContribLoading(false);
+    }
+  };
+
+  const exitContrib = () => {
+    setContribGroups([{ civ: '', und: '' }]);
+    setContribResult(null);
+    setContribError('');
+    setMode(null);
+  };
+
   return (
     <div className="card animate-fade-in space-y-6">
       {/* Logo */}
@@ -289,6 +348,87 @@ export default function Home({ playerName: initialName, playerAvatar: initialAva
             onClick={() => setMode('mic-test')}
           >
             🎤 测试麦克风
+          </button>
+          <button
+            className="w-full py-3 rounded-2xl font-bold text-base bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => setMode('contribute')}
+            disabled={!name.trim()}
+          >
+            ✏️ 投稿词汇
+          </button>
+        </div>
+      ) : mode === 'contribute' ? (
+        <div className="space-y-4 animate-fade-in">
+          <div className="text-center text-sm text-gray-500">
+            投稿者：<span className="font-bold text-violet-600">{name || '未填写'}</span>
+          </div>
+          <p className="text-xs text-gray-400 text-center">每组填写一对相近词（平民词 / 卧底词），可添加多组一起提交</p>
+
+          <div className="space-y-3">
+            {contribGroups.map((row, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  className="input-field !py-2 flex-1"
+                  placeholder="平民词"
+                  value={row.civ}
+                  maxLength={20}
+                  onChange={(e) => updateContribRow(i, 'civ', e.target.value)}
+                />
+                <span className="text-gray-300">/</span>
+                <input
+                  type="text"
+                  className="input-field !py-2 flex-1"
+                  placeholder="卧底词"
+                  value={row.und}
+                  maxLength={20}
+                  onChange={(e) => updateContribRow(i, 'und', e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="w-8 h-8 shrink-0 rounded-lg bg-gray-100 text-gray-400 hover:bg-red-50 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
+                  onClick={() => removeContribRow(i)}
+                  disabled={contribGroups.length === 1}
+                  title="删除这组"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            className="w-full py-2 rounded-xl border border-dashed border-violet-300 text-violet-500 text-sm hover:bg-violet-50 transition-colors"
+            onClick={addContribRow}
+          >
+            + 添加一组
+          </button>
+
+          {contribError && (
+            <div className="text-sm text-red-500 bg-red-50 rounded-xl p-3">{contribError}</div>
+          )}
+          {contribResult && (
+            <div className="text-sm bg-violet-50 rounded-xl p-3 space-y-1">
+              <p className="text-violet-700 font-bold">
+                成功投稿 {contribResult.added} 组
+                {contribResult.skipped.length > 0 ? `，跳过 ${contribResult.skipped.length} 组` : ''}
+              </p>
+              {contribResult.skipped.length > 0 && (
+                <ul className="text-xs text-amber-600 space-y-0.5">
+                  {contribResult.skipped.map((s) => (
+                    <li key={s.index}>第 {s.index + 1} 组：{s.reason}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          <button className="btn-primary" onClick={submitContrib} disabled={contribLoading || !name.trim()}>
+            {contribLoading ? '提交中...' : '提交投稿'}
+          </button>
+          <button className="btn-secondary" onClick={exitContrib}>
+            返回
           </button>
         </div>
       ) : mode === 'mic-test' ? (

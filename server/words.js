@@ -166,4 +166,4 @@ function getRandomWordPair() {
   return { civilianWord: pair[1], undercoverWord: pair[0] };
 }
 
-module.exports = { getRandomWordPair };
+module.exports = { getRandomWordPair, wordPairs };

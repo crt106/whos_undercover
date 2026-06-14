@@ -1,4 +1,4 @@
-const { getRandomWordPair } = require('./words');
+const { getRandomWordPair } = require('./wordStore');
 
 const PHASE = {
   WAITING: 'waiting',
@@ -38,6 +38,7 @@ class Room {
     this.currentSpeakerIndex = -1;
     this.civilianWord = '';
     this.undercoverWord = '';
+    this.wordContributor = null; // 本局词语投稿人（内置词为 null）
     this.speakingTimer = null;
     this.votingTimer = null;
     this.voteResult = null;
@@ -187,9 +188,10 @@ class Room {
       return { error: '白板模式至少需要5名玩家' };
     }
 
-    const { civilianWord, undercoverWord } = getRandomWordPair();
+    const { civilianWord, undercoverWord, contributor } = getRandomWordPair();
     this.civilianWord = civilianWord;
     this.undercoverWord = undercoverWord;
+    this.wordContributor = contributor;
 
     // 随机选择非平民（卧底 + 白板），尽量不选上一局的非平民
     let playerIds = this.players.map(p => p.id);
@@ -272,9 +274,10 @@ class Room {
   }
 
   changeWords() {
-    const { civilianWord, undercoverWord } = getRandomWordPair();
+    const { civilianWord, undercoverWord, contributor } = getRandomWordPair();
     this.civilianWord = civilianWord;
     this.undercoverWord = undercoverWord;
+    this.wordContributor = contributor;
 
     this.players.forEach(p => {
       if (p.role === 'undercover') p.word = undercoverWord;
@@ -685,6 +688,8 @@ class Room {
       // 游戏结束时暴露词语
       civilianWord: this.phase === PHASE.GAME_OVER ? this.civilianWord : null,
       undercoverWord: this.phase === PHASE.GAME_OVER ? this.undercoverWord : null,
+      // 游戏结束时暴露本局词语投稿人（内置词为 null）
+      wordContributor: this.phase === PHASE.GAME_OVER ? this.wordContributor : null,
       players: this.players.map(p => ({
         id: p.id,
         name: p.name,
@@ -727,6 +732,7 @@ class Room {
     this.currentSpeakerIndex = -1;
     this.civilianWord = '';
     this.undercoverWord = '';
+    this.wordContributor = null;
     this.voteResult = null;
     this.winner = null;
     this.changeWordVotes = new Set();
@@ -761,6 +767,7 @@ class Room {
     this.currentSpeakerIndex = -1;
     this.civilianWord = '';
     this.undercoverWord = '';
+    this.wordContributor = null;
     this.voteResult = null;
     this.winner = null;
     this.changeWordVotes = new Set();

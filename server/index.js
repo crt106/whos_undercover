@@ -9,6 +9,7 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { createRoom, getRoom, deleteRoom, PHASE } = require('./game');
 const { sendWebhook } = require('./webhook');
+const { addContributions } = require('./wordStore');
 
 const app = express();
 const server = http.createServer(app);
@@ -106,6 +107,21 @@ app.get('/api/voice/:filename', (req, res) => {
   const filePath = path.join(uploadsDir, req.params.filename);
   if (!fs.existsSync(filePath)) return res.status(404).send('Not found');
   res.sendFile(filePath);
+});
+
+// 玩家投稿词汇（需通过密码校验；投稿者为首页填写的昵称）
+app.post('/api/words/contribute', (req, res) => {
+  const { contributor, groups } = req.body || {};
+
+  if (!contributor || typeof contributor !== 'string' || !contributor.trim()) {
+    return res.status(400).json({ error: '缺少投稿者ID' });
+  }
+  if (!Array.isArray(groups) || groups.length === 0) {
+    return res.status(400).json({ error: '请至少提交一组词' });
+  }
+
+  const result = addContributions(groups, contributor.trim());
+  res.json(result);
 });
 
 // 可被观战的游戏中阶段

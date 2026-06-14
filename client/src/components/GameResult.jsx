@@ -87,6 +87,9 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
               <p>平民词：<span className="font-bold">{voteResult.gameOver.civilianWord}</span></p>
               <p>卧底词：<span className="font-bold text-red-500">{voteResult.gameOver.undercoverWord}</span></p>
             </div>
+            {roomState.wordContributor && (
+              <p className="text-xs text-amber-600">本局词语由 <span className="font-bold">{roomState.wordContributor}</span> 投稿 ✨</p>
+            )}
           </div>
         )}
 
@@ -122,6 +125,9 @@ export default function GameResult({ voteResult, roomState, isHost, onNextRound,
               <p>平民词：<span className="font-bold">{roomState.civilianWord}</span></p>
               <p>卧底词：<span className="font-bold text-red-500">{roomState.undercoverWord}</span></p>
             </div>
+            {roomState.wordContributor && (
+              <p className="text-xs text-amber-600">本局词语由 <span className="font-bold">{roomState.wordContributor}</span> 投稿 ✨</p>
+            )}
           </div>
         )}
 
