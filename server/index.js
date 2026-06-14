@@ -110,7 +110,7 @@ app.get('/api/voice/:filename', (req, res) => {
 });
 
 // 玩家投稿词汇（需通过密码校验；投稿者为首页填写的昵称）
-app.post('/api/words/contribute', (req, res) => {
+app.post('/api/words/contribute', async (req, res) => {
   const { contributor, groups } = req.body || {};
 
   if (!contributor || typeof contributor !== 'string' || !contributor.trim()) {
@@ -120,8 +120,13 @@ app.post('/api/words/contribute', (req, res) => {
     return res.status(400).json({ error: '请至少提交一组词' });
   }
 
-  const result = addContributions(groups, contributor.trim());
-  res.json(result);
+  try {
+    const result = await addContributions(groups, contributor.trim());
+    res.json(result);
+  } catch (err) {
+    console.error('投稿处理失败:', err);
+    res.status(500).json({ error: '投稿失败，请稍后重试' });
+  }
 });
 
 // 可被观战的游戏中阶段
